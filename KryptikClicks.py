@@ -97,12 +97,30 @@ def load_config():
         cfg["click_limit"] = DEFAULT_CONFIG["click_limit"]
     if not isinstance(cfg.get("sound_enabled"), bool):
         cfg["sound_enabled"] = DEFAULT_CONFIG["sound_enabled"]
+
+    def is_number(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    min_ms, max_ms, thr = cfg.get("min_delay_ms"), cfg.get("max_delay_ms"), cfg.get("match_threshold")
+    if not is_number(min_ms) or not is_number(max_ms) or min_ms < 0 or max_ms < min_ms:
+        cfg["min_delay_ms"] = DEFAULT_CONFIG["min_delay_ms"]
+        cfg["max_delay_ms"] = DEFAULT_CONFIG["max_delay_ms"]
+    if not is_number(thr) or not (0.0 < thr <= 1.0):
+        cfg["match_threshold"] = DEFAULT_CONFIG["match_threshold"]
     return cfg
 
 
 def save_config(cfg):
     with open(CONFIG_PATH, "w") as f:
         json.dump(cfg, f, indent=2)
+
+
+def canvas_point_to_absolute(canvas_x, canvas_y, monitor):
+    """Converts a point picked on the capture overlay canvas (0,0 = top-left of
+    the captured image) to a true absolute screen coordinate. Needed because
+    mss's combined virtual-desktop origin (monitor["left"/"top"]) is non-zero
+    whenever a monitor sits left of/above the primary display."""
+    return (canvas_x + monitor["left"], canvas_y + monitor["top"])
 
 
 def run_capture_ui(parent=None):
@@ -151,7 +169,7 @@ def run_capture_ui(parent=None):
                 event.x, event.y, event.x, event.y, outline="red", width=2
             )
         elif state["phase"] == 2:
-            state["target_point"] = (event.x, event.y)
+            state["target_point"] = canvas_point_to_absolute(event.x, event.y, monitor)
             canvas.create_oval(
                 event.x - 6, event.y - 6, event.x + 6, event.y + 6, outline="lime", width=3
             )
@@ -286,6 +304,8 @@ class Detector:
             self.template = self.cv2.imread(TEMPLATE_PATH, self.cv2.IMREAD_GRAYSCALE)
             if self.template is not None:
                 self.t_h, self.t_w = self.template.shape[:2]
+            else:
+                self.log(f"Warning: {TEMPLATE_PATH} is corrupted/unreadable - recapture needed.")
         if os.path.exists(TARGET_PATH):
             try:
                 with open(TARGET_PATH) as f:
@@ -303,8 +323,8 @@ class Detector:
 
     def _click_once(self):
         import pyautogui
-        x, y = self._resolve_click_position()
         try:
+            x, y = self._resolve_click_position()
             pyautogui.click(x, y, button=self.cfg.get("click_button", "left"))
         except Exception as e:
             self.log(f"Click error (continuing): {e}")

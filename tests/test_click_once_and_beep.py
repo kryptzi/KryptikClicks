@@ -44,6 +44,29 @@ def test_click_once_swallows_click_errors_without_crashing(kc, monkeypatch):
     assert d.total_clicks == 1  # still counted as an attempted click
 
 
+def test_click_once_swallows_position_resolution_errors_without_crashing(kc, monkeypatch):
+    # Regression test: generic+cursor mode resolves the click position via
+    # pyautogui.position(), a second fallible pyautogui call alongside
+    # pyautogui.click() - it must be guarded the same way, or a background
+    # scan/click thread can die silently (the exact class of bug this
+    # project's error handling elsewhere is meant to prevent).
+    cfg = kc.load_config()
+    cfg["click_mode"] = "generic"
+    cfg["generic_position"] = "cursor"
+    d = kc.Detector(cfg, log=lambda m: None)
+
+    import pyautogui
+
+    def boom():
+        raise RuntimeError("simulated position-query failure")
+
+    monkeypatch.setattr(pyautogui, "position", boom)
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: None)
+
+    d._click_once()  # must not raise
+    assert d.total_clicks == 1
+
+
 def test_beep_does_nothing_when_sound_disabled(kc, monkeypatch):
     cfg = kc.load_config()
     cfg["sound_enabled"] = False
