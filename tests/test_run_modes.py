@@ -25,7 +25,7 @@ def _run_until_paused_or_timeout(detector, timeout=3.0):
 def test_generic_mode_clicks_immediately_without_a_trigger_and_stops_at_limit(kc, monkeypatch):
     cfg = kc.load_config()
     cfg["click_mode"] = "generic"
-    cfg["generic_position"] = "fixed"
+    cfg["click_position"] = "fixed"
     cfg["click_limit"] = 3
     cfg["min_delay_ms"] = 0
     cfg["max_delay_ms"] = 1

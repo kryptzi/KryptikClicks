@@ -52,7 +52,7 @@ def test_click_once_swallows_position_resolution_errors_without_crashing(kc, mon
     # project's error handling elsewhere is meant to prevent).
     cfg = kc.load_config()
     cfg["click_mode"] = "generic"
-    cfg["generic_position"] = "cursor"
+    cfg["click_position"] = "cursor"
     d = kc.Detector(cfg, log=lambda m: None)
 
     import pyautogui

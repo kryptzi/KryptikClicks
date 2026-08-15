@@ -50,13 +50,13 @@ DEFAULT_CONFIG = {
     "match_threshold": 0.85,
     "click_button": "left",
     "click_mode": "targeted",
-    "generic_position": "fixed",
+    "click_position": "fixed",
     "click_limit": 0,
     "sound_enabled": False,
 }
 CLICK_BUTTONS = ["left", "right", "middle"]
 CLICK_MODES = ["targeted", "generic"]
-GENERIC_POSITIONS = ["fixed", "cursor"]
+CLICK_POSITIONS = ["fixed", "cursor"]
 SCAN_INTERVAL = 0.08      # seconds between screen scans while idle/watching
 TOGGLE_HOTKEY = "f6"
 QUIT_HOTKEY = "f9"
@@ -91,8 +91,8 @@ def load_config():
         cfg["click_button"] = DEFAULT_CONFIG["click_button"]
     if cfg.get("click_mode") not in CLICK_MODES:
         cfg["click_mode"] = DEFAULT_CONFIG["click_mode"]
-    if cfg.get("generic_position") not in GENERIC_POSITIONS:
-        cfg["generic_position"] = DEFAULT_CONFIG["generic_position"]
+    if cfg.get("click_position") not in CLICK_POSITIONS:
+        cfg["click_position"] = DEFAULT_CONFIG["click_position"]
     if not isinstance(cfg.get("click_limit"), (int, float)) or cfg["click_limit"] < 0:
         cfg["click_limit"] = DEFAULT_CONFIG["click_limit"]
     if not isinstance(cfg.get("sound_enabled"), bool):
@@ -123,8 +123,11 @@ def canvas_point_to_absolute(canvas_x, canvas_y, monitor):
     return (canvas_x + monitor["left"], canvas_y + monitor["top"])
 
 
-def run_capture_ui(parent=None):
-    """Shows the fullscreen capture overlay (template drag-select + click-target pick).
+def run_capture_ui(parent=None, require_click_point=True):
+    """Shows the fullscreen capture overlay: drag-select the trigger image, then
+    (if require_click_point) click the spot to auto-click. Pass require_click_point=False
+    to skip that second step - used when the click position will be the live cursor
+    position instead of a captured point.
     Returns (template_box, target_point, full_img), or (None, None, None) if cancelled.
     Pass a Tkinter root as `parent` to run modally inside an existing app; omit for standalone use.
     """
@@ -151,11 +154,12 @@ def run_capture_ui(parent=None):
     canvas.create_image(0, 0, image=tk_img, anchor="nw")
     canvas.image = tk_img  # keep a reference alive
 
-    label = tk.Label(
-        win,
-        text="Step 1/2: Drag a tight box around the trigger you want it to watch for, then release. Esc to cancel.",
-        bg="yellow",
+    step1_text = (
+        "Step 1/2: Drag a tight box around the trigger you want it to watch for, then release. Esc to cancel."
+        if require_click_point else
+        "Drag a tight box around the trigger you want it to watch for, then release. Esc to cancel."
     )
+    label = tk.Label(win, text=step1_text, bg="yellow")
     label.place(x=10, y=10)
 
     state = {"phase": 1, "start": None, "rect": None, "template_box": None, "target_point": None}
@@ -191,10 +195,13 @@ def run_capture_ui(parent=None):
         if right - left < 3 or bottom - top < 3:
             return
         state["template_box"] = (left, top, right, bottom)
-        state["phase"] = 2
-        label.config(
-            text="Step 2/2: Click the spot you want it to auto-click. Esc to cancel."
-        )
+        if require_click_point:
+            state["phase"] = 2
+            label.config(
+                text="Step 2/2: Click the spot you want it to auto-click. Esc to cancel."
+            )
+        else:
+            win.destroy()
 
     def on_escape(event):
         state["template_box"] = None
@@ -211,7 +218,7 @@ def run_capture_ui(parent=None):
     else:
         parent.wait_window(win)
 
-    if state["template_box"] is None or state["target_point"] is None:
+    if state["template_box"] is None:
         return None, None, None
     return state["template_box"], state["target_point"], full_img
 
@@ -219,8 +226,9 @@ def run_capture_ui(parent=None):
 def save_capture(template_box, target_point, full_img):
     crop = full_img.crop(template_box)
     crop.save(TEMPLATE_PATH)
-    with open(TARGET_PATH, "w") as f:
-        f.write(f"{target_point[0]},{target_point[1]}\n")
+    if target_point is not None:
+        with open(TARGET_PATH, "w") as f:
+            f.write(f"{target_point[0]},{target_point[1]}\n")
     return crop.width, crop.height
 
 
@@ -293,10 +301,13 @@ class Detector:
 
     @property
     def ready(self):
+        cursor_position = self.cfg.get("click_position") == "cursor"
         if self.cfg.get("click_mode", "targeted") == "generic":
-            if self.cfg.get("generic_position") == "cursor":
+            if cursor_position:
                 return True  # no capture needed at all
             return self.click_x is not None  # fixed position needs a captured point, not a template
+        if cursor_position:
+            return self.template is not None  # trigger still needed, but not a click point
         return self.template is not None and self.click_x is not None
 
     def load(self):
@@ -316,7 +327,7 @@ class Detector:
                 self.click_x = self.click_y = None
 
     def _resolve_click_position(self):
-        if self.cfg.get("click_mode") == "generic" and self.cfg.get("generic_position") == "cursor":
+        if self.cfg.get("click_position") == "cursor":
             import pyautogui
             return pyautogui.position()
         return (self.click_x, self.click_y)
@@ -743,9 +754,9 @@ class KryptikClicksGUI:
             value="generic", command=self._on_mode_changed, **radio_kwargs,
         ).pack(anchor="w", padx=20)
 
-        # Built now but only pack()ed (via _on_mode_changed) when mode == generic.
         self.position_frame = tk.Frame(body, bg=c["bg"])
-        self.position_var = tk.StringVar(value=self.cfg["generic_position"])
+        self.position_frame.pack(fill="x", padx=20)
+        self.position_var = tk.StringVar(value=self.cfg["click_position"])
         tk.Label(
             self.position_frame, text="Click position:", bg=c["bg"], fg=c["muted"], font=(FONT, 8)
         ).pack(anchor="w", pady=(6, 2))
@@ -757,7 +768,6 @@ class KryptikClicksGUI:
             self.position_frame, text="Current cursor position", variable=self.position_var,
             value="cursor", command=self._refresh_template_label, **radio_kwargs,
         ).pack(anchor="w")
-        # (packed/hidden by _on_mode_changed based on the initial mode)
 
         self.template_var = tk.StringVar(value="No template captured yet.")
         self.template_label = tk.Label(
@@ -878,10 +888,9 @@ class KryptikClicksGUI:
         self._on_mode_changed()
 
     def _on_mode_changed(self):
-        if self.mode_var.get() == "generic":
-            self.position_frame.pack(fill="x", padx=20, before=self.template_label)
-        else:
-            self.position_frame.pack_forget()
+        # The click-position choice (fixed point / current cursor) applies to
+        # both modes, so it's always shown - only the trigger-capture
+        # requirement (Targeted needs a template; Generic doesn't) differs.
         self._refresh_template_label()
 
     def _add_tooltip(self, widget, text):
@@ -920,18 +929,29 @@ class KryptikClicksGUI:
         # Reflects the mode/position currently selected in the form (which may not be
         # saved yet) - same "preview before Save" behavior as the other settings fields.
         mode = self.mode_var.get()
-        position = self.position_var.get()
+        cursor_position = self.position_var.get() == "cursor"
+        needs_template = mode == "targeted"
+        needs_point = not cursor_position
 
-        if mode == "generic" and position == "cursor":
+        capture_label = "Capture Template..." if needs_template and not needs_point else "Capture Template + Click Target..."
+        recapture_label = "Recapture Template..." if needs_template and not needs_point else "Recapture Template + Click Target..."
+
+        if not needs_template and not needs_point:
             self.template_var.set("Cursor mode selected - no capture needed. It'll click wherever your mouse is.")
-            self.capture_var.set("Capture Template + Click Target...")
+            self.capture_var.set(capture_label)
             return
 
+        have_template = self.detector.template is not None
         have_point = self.detector.click_x is not None
-        ready_for_mode = (self.detector.template is not None and have_point) if mode == "targeted" else have_point
+        ready_for_mode = (not needs_template or have_template) and (not needs_point or have_point)
 
         if ready_for_mode:
-            if mode == "generic":
+            if not needs_point:
+                self.template_var.set(
+                    f"Using saved trigger: {self.detector.t_w}x{self.detector.t_h}px. "
+                    f"Clicks wherever your mouse is when it's detected."
+                )
+            elif not needs_template:
                 self.template_var.set(f"Using saved click point ({self.detector.click_x}, {self.detector.click_y}).")
             else:
                 self.template_var.set(
@@ -939,10 +959,10 @@ class KryptikClicksGUI:
                     f"click target ({self.detector.click_x}, {self.detector.click_y}). "
                     f"Reused automatically — recapture only if it stops matching."
                 )
-            self.capture_var.set("Recapture Template + Click Target...")
+            self.capture_var.set(recapture_label)
         else:
             self.template_var.set("No template captured yet - click below to set it up (one-time).")
-            self.capture_var.set("Capture Template + Click Target...")
+            self.capture_var.set(capture_label)
 
     def _refresh_status(self):
         c = self.COLORS
@@ -974,9 +994,18 @@ class KryptikClicksGUI:
     def on_capture(self):
         was_scanning = self.detector.scanning_active.is_set()
         self.detector.pause_scanning()
+        # The capture flow (how many steps, whether a click point is needed)
+        # depends on the currently selected mode/position - apply those now
+        # rather than leaving them as an unsaved preview, so Detector.ready
+        # reflects reality immediately after capturing instead of requiring
+        # a separate "Save Settings" click first.
+        self.cfg["click_mode"] = self.mode_var.get()
+        self.cfg["click_position"] = self.position_var.get()
+        save_config(self.cfg)
+        require_point = self.position_var.get() != "cursor"
         self.root.withdraw()
         try:
-            box, point, full_img = run_capture_ui(parent=self.root)
+            box, point, full_img = run_capture_ui(parent=self.root, require_click_point=require_point)
         finally:
             self.root.deiconify()
         if box is None:
@@ -985,7 +1014,10 @@ class KryptikClicksGUI:
             save_capture(box, point, full_img)
             self.detector.load()
             self._refresh_template_label()
-            self.log(f"Captured new template + click target {point}.")
+            if point is not None:
+                self.log(f"Captured new template + click target {point}.")
+            else:
+                self.log("Captured new template.")
         if was_scanning and self.detector.ready:
             self.detector.start_scanning()
         self._refresh_status()
@@ -1015,7 +1047,7 @@ class KryptikClicksGUI:
         self.cfg.update(parsed)
         self.cfg["click_button"] = self.button_var.get()
         self.cfg["click_mode"] = self.mode_var.get()
-        self.cfg["generic_position"] = self.position_var.get()
+        self.cfg["click_position"] = self.position_var.get()
         self.cfg["sound_enabled"] = bool(self.sound_var.get())
         save_config(self.cfg)
         self._refresh_status()
