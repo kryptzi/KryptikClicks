@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -463,6 +463,46 @@ class Detector:
             sct.close()
 
 
+HOTKEY_DEBOUNCE_SECONDS = 0.3
+
+
+class HotkeyListener:
+    """Debounces held-key repeats and dispatches mapped hotkey actions.
+
+    `hotkey_map` maps a key value to a zero-arg callback. `on_press`/`on_release`
+    are meant to be handed straight to `pynput.keyboard.Listener`. A held key
+    (repeat presses without an intervening release) never re-fires, and a
+    released-then-re-pressed key is still subject to a debounce window so two
+    genuine presses in quick succession don't double-fire.
+
+    `dispatch`, if given, receives the action callable instead of the listener
+    calling it directly - e.g. to marshal it onto another thread with
+    `lambda action: self.root.after(0, action)`.
+    """
+
+    def __init__(self, hotkey_map, dispatch=None):
+        self.hotkey_map = hotkey_map
+        self.dispatch = dispatch if dispatch is not None else (lambda action: action())
+        self._held_keys = set()
+        self._last_fired = {}
+
+    def on_press(self, key):
+        if key in self._held_keys:
+            return
+        self._held_keys.add(key)
+        action = self.hotkey_map.get(key)
+        if action is None:
+            return
+        now = time.monotonic()
+        if now - self._last_fired.get(key, 0) < HOTKEY_DEBOUNCE_SECONDS:
+            return
+        self._last_fired[key] = now
+        self.dispatch(action)
+
+    def on_release(self, key):
+        self._held_keys.discard(key)
+
+
 def run_headless():
     from pynput import keyboard as pynkeyboard
 
@@ -492,27 +532,9 @@ def run_headless():
         pynkeyboard.Key[TOGGLE_HOTKEY]: toggle_scanning,
         pynkeyboard.Key[QUIT_HOTKEY]: request_quit,
     }
-    held_keys = set()
-    last_fired = {}
-    DEBOUNCE_SECONDS = 0.3
+    hotkeys = HotkeyListener(hotkey_map)
 
-    def on_press(key):
-        if key in held_keys:
-            return
-        held_keys.add(key)
-        action = hotkey_map.get(key)
-        if action is None:
-            return
-        now = time.monotonic()
-        if now - last_fired.get(key, 0) < DEBOUNCE_SECONDS:
-            return
-        last_fired[key] = now
-        action()
-
-    def on_release(key):
-        held_keys.discard(key)
-
-    listener = pynkeyboard.Listener(on_press=on_press, on_release=on_release)
+    listener = pynkeyboard.Listener(on_press=hotkeys.on_press, on_release=hotkeys.on_release)
     listener.start()
 
     detector.run()
@@ -574,13 +596,13 @@ class KryptikClicksGUI:
         self._refresh_status()
 
         # Global hotkeys (F6/F9) work even while another window has focus.
-        self.held_keys = set()
-        self.last_fired = {}
+        # Fired on the pynput listener thread - dispatch marshals the action onto the GUI thread.
         self.hotkey_map = {
             pynkeyboard.Key[TOGGLE_HOTKEY]: self.on_toggle,
             pynkeyboard.Key[QUIT_HOTKEY]: self.on_quit,
         }
-        self.listener = pynkeyboard.Listener(on_press=self._on_key_press, on_release=self._on_key_release)
+        self.hotkeys = HotkeyListener(self.hotkey_map, dispatch=lambda action: self.root.after(0, action))
+        self.listener = pynkeyboard.Listener(on_press=self.hotkeys.on_press, on_release=self.hotkeys.on_release)
         self.listener.start()
 
         self.worker_thread = threading.Thread(target=self.detector.run, daemon=True)
@@ -616,23 +638,6 @@ class KryptikClicksGUI:
                     break
         except Exception:
             pass  # best-effort cosmetic touch; fine if unsupported
-
-    # --- hotkeys (run on the pynput listener thread; marshal into the GUI thread) ---
-    def _on_key_press(self, key):
-        if key in self.held_keys:
-            return
-        self.held_keys.add(key)
-        action = self.hotkey_map.get(key)
-        if action is None:
-            return
-        now = time.monotonic()
-        if now - self.last_fired.get(key, 0) < 0.3:
-            return
-        self.last_fired[key] = now
-        self.root.after(0, action)
-
-    def _on_key_release(self, key):
-        self.held_keys.discard(key)
 
     def _on_callback_exception(self, exc_type, exc_value, exc_tb):
         # Tkinter callback errors otherwise print to stderr, which is invisible in the

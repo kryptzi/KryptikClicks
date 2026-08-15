@@ -35,15 +35,24 @@ python KryptikClicks.py --version   # print the version and exit
 ## Usage
 
 **Targeted mode** (default):
-1. Open KryptikClicks, select **Targeted** under Mode, and click
-   **Capture Template + Click Target...**
-2. Your screen freezes into a snapshot. Drag a tight box around the trigger
-   you want it to watch for (e.g. just the fixed part of some text — the
-   trigger image should look the same every time it appears).
-3. Click once more on the spot you want it to click when the trigger shows up.
-4. Press **Start (F6)**. It'll click that spot, with a randomized delay
-   between clicks, for as long as the trigger stays visible, and stop
-   automatically when it disappears.
+1. Open KryptikClicks, select **Targeted** under Mode, then choose a click
+   position: a **fixed point** (captured below) or your **current cursor
+   position**. With cursor position selected, it still watches for the
+   trigger as normal — it just clicks wherever your mouse already is instead
+   of jumping it to a captured point.
+2. Click **Capture Template + Click Target...** (this reads just **Capture
+   Template...** if you chose cursor position, since no click point needs to
+   be captured). Your screen freezes into a snapshot. Drag a tight box
+   around the trigger you want it to watch for (e.g. just the fixed part of
+   some text — the trigger image should look the same every time it
+   appears).
+3. If you chose a fixed point, click once more on the spot you want it to
+   click when the trigger shows up. If you chose cursor position, capture
+   ends right there — there's no second step.
+4. Press **Start (F6)**. It'll click — the captured spot, or your live
+   cursor position if you chose that — with a randomized delay between
+   clicks, for as long as the trigger stays visible, and stop automatically
+   when it disappears.
 
 **Generic mode:**
 1. Select **Generic** under Mode, then choose a click position: a **fixed
@@ -63,6 +72,10 @@ python KryptikClicks.py --version   # print the version and exit
   match your captured trigger image to fire clicking. Higher = stricter/fewer
   false triggers; lower = more lenient but may misfire. `0.85` is a good
   default.
+- **Click position** — a fixed captured point, or your current cursor
+  position. Available in both modes: in Targeted mode with cursor position
+  selected, it still watches for the trigger as normal, it just clicks
+  wherever the mouse already is instead of jumping it to a captured point.
 - **Click button** — left, right, or middle mouse button.
 - **Repeat limit (0 = infinite)** — automatically pause after this many
   clicks.

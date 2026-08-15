@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-15
+
+### Changed
+- **Targeted mode** now supports the same click-position choice as Generic
+  mode: a fixed captured point, or the current cursor position. With cursor
+  position selected, Targeted mode still watches for the trigger as normal,
+  but clicks wherever the mouse already is instead of jumping it to a
+  captured point.
+- The capture flow (drag-select the trigger, then click a target point) now
+  skips the second step entirely when cursor position is selected, since no
+  click point needs to be captured.
+- Deduplicated the hotkey debounce/dispatch logic (previously implemented
+  separately in the GUI and headless mode) into a single `HotkeyListener`.
+
+### Fixed
+- Captured click points were stored as canvas-relative pixels with no
+  correction for mss's virtual-desktop origin, so on multi-monitor setups
+  where a display sits left of/above the primary, clicks landed offset from
+  the intended target.
+- `Detector.load()` silently left the trigger template unset if the PNG was
+  corrupted/unreadable, instead of logging a warning like the parallel
+  click-target handling already did.
+- A second unguarded `pyautogui` call (`pyautogui.position()`, used by
+  cursor-position mode) could silently kill the background scan/click thread
+  the same way an earlier unguarded `pyautogui.click()` call once did.
+- `load_config()` didn't validate `min_delay_ms`/`max_delay_ms`/
+  `match_threshold`, so a hand-edited or corrupted config with non-numeric
+  values there would crash the background thread.
+- The app icon, in-app emblem, and README banner had an opaque dark
+  background baked in (from the source art's checkered placeholder) instead
+  of a transparent one, so the taskbar/title-bar icon showed as a solid
+  square instead of blending in. Rebuilt all three with a real transparent
+  background.
+
 ## [1.2.0] - 2026-08-15
 
 ### Added
@@ -49,7 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kryptzi/KryptikClicks/releases/tag/v1.0.0
