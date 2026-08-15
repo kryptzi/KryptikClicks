@@ -6,6 +6,7 @@ kryptikclicks_config.json
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # PyInstaller build output
 build/
