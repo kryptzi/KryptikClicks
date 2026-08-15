@@ -37,14 +37,16 @@ DEFAULT_CONFIG = {
     "min_delay_ms": 50,
     "max_delay_ms": 150,
     "match_threshold": 0.85,
+    "click_button": "left",
 }
+CLICK_BUTTONS = ["left", "right", "middle"]
 SCAN_INTERVAL = 0.08      # seconds between screen scans while idle/watching
 TOGGLE_HOTKEY = "f6"
 QUIT_HOTKEY = "f9"
 # ---------------------------------------------------------------------------
 
-REQUIRED_PACKAGES = ["cv2", "mss", "numpy", "pyautogui", "pynput"]
-PIP_INSTALL_CMD = "pip install opencv-python mss numpy pyautogui pynput"
+REQUIRED_PACKAGES = ["cv2", "mss", "numpy", "pyautogui", "pynput", "PIL"]
+PIP_INSTALL_CMD = "pip install opencv-python mss numpy pyautogui pynput Pillow"
 
 
 def check_dependencies():
@@ -68,6 +70,8 @@ def load_config():
                 cfg.update(json.load(f))
         except (OSError, ValueError):
             pass
+    if cfg.get("click_button") not in CLICK_BUTTONS:
+        cfg["click_button"] = DEFAULT_CONFIG["click_button"]
     return cfg
 
 
@@ -218,8 +222,13 @@ class Detector:
             if self.template is not None:
                 self.t_h, self.t_w = self.template.shape[:2]
         if os.path.exists(TARGET_PATH):
-            with open(TARGET_PATH) as f:
-                self.click_x, self.click_y = map(int, f.read().strip().split(","))
+            try:
+                with open(TARGET_PATH) as f:
+                    x, y = map(int, f.read().strip().split(","))
+                self.click_x, self.click_y = x, y
+            except (OSError, ValueError):
+                self.log(f"Warning: {TARGET_PATH} is corrupted/unreadable - recapture needed.")
+                self.click_x = self.click_y = None
 
     def _find_match_in(self, sct, region):
         shot = sct.grab(region)
@@ -240,6 +249,14 @@ class Detector:
         top = max(monitor["top"], y - self.t_h // 2 - pad)
         right = min(monitor["left"] + monitor["width"], x + self.t_w // 2 + pad)
         bottom = min(monitor["top"] + monitor["height"], y + self.t_h // 2 + pad)
+        # Guard against a region smaller than the template near screen edges/corners
+        # (cv2.matchTemplate raises if the search image is smaller than the template).
+        if right - left < self.t_w:
+            right = min(monitor["left"] + monitor["width"], left + self.t_w)
+            left = max(monitor["left"], right - self.t_w)
+        if bottom - top < self.t_h:
+            bottom = min(monitor["top"] + monitor["height"], top + self.t_h)
+            top = max(monitor["top"], bottom - self.t_h)
         return {"left": left, "top": top, "width": right - left, "height": bottom - top}
 
     def run(self):
@@ -255,6 +272,7 @@ class Detector:
         sct = self.mss.mss()
         monitor = sct.monitors[0]
         scan_count = 0
+        last_error_log = 0.0
 
         def scan_tick():
             nonlocal sct, monitor, scan_count
@@ -264,6 +282,19 @@ class Detector:
                 sct = self.mss.mss()
                 monitor = sct.monitors[0]
 
+        def safe_find_match(region):
+            # A transient capture/match error shouldn't permanently kill background
+            # detection - log it (rate-limited) and treat the frame as a miss.
+            nonlocal last_error_log
+            try:
+                return self._find_match_in(sct, region)
+            except Exception as e:
+                now = time.monotonic()
+                if now - last_error_log > 5.0:
+                    self.log(f"Scan error (continuing): {e}")
+                    last_error_log = now
+                return None
+
         try:
             while not self.stop_event.is_set():
                 if not (self.scanning_active.is_set() and self.ready):
@@ -271,7 +302,7 @@ class Detector:
                     continue
 
                 scan_tick()
-                match = self._find_match_in(sct, monitor)
+                match = safe_find_match(monitor)
                 if match is None:
                     time.sleep(SCAN_INTERVAL)
                     continue
@@ -279,13 +310,16 @@ class Detector:
                 self.log("Trigger detected - clicking...")
                 clicks = 0
                 while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
-                    pyautogui.click(self.click_x, self.click_y)
+                    try:
+                        pyautogui.click(self.click_x, self.click_y, button=self.cfg.get("click_button", "left"))
+                    except Exception as e:
+                        self.log(f"Click error (continuing): {e}")
                     clicks += 1
                     min_d = self.cfg["min_delay_ms"] / 1000.0
                     max_d = self.cfg["max_delay_ms"] / 1000.0
                     time.sleep(random.uniform(min_d, max_d))
                     scan_tick()
-                    match = self._find_match_in(sct, self._local_region_around(match[0], match[1], monitor))
+                    match = safe_find_match(self._local_region_around(match[0], match[1], monitor))
                 self.log(f"Stopped clicking ({clicks} clicks).")
         finally:
             sct.close()
@@ -296,7 +330,7 @@ def run_headless():
 
     detector = Detector(load_config())
     if not detector.ready:
-        print(f"No template/click-target found.")
+        print("No template/click-target found.")
         print("Run with --capture first: python KryptikClicks.py --capture")
         sys.exit(1)
 
@@ -383,6 +417,7 @@ class KryptikClicksGUI:
         self.root.configure(bg=self.COLORS["bg"])
         self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.on_quit)
+        self.root.report_callback_exception = self._on_callback_exception
         self._enable_dark_titlebar(self.root)
 
         self._style = ttk.Style(self.root)
@@ -419,7 +454,7 @@ class KryptikClicksGUI:
             import ctypes
 
             window.update_idletasks()
-            hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+            hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
             value = ctypes.c_int(1)
             for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (new/old builds)
                 if ctypes.windll.dwmapi.DwmSetWindowAttribute(
@@ -446,6 +481,17 @@ class KryptikClicksGUI:
     def _on_key_release(self, key):
         self.held_keys.discard(key)
 
+    def _on_callback_exception(self, exc_type, exc_value, exc_tb):
+        # Tkinter callback errors otherwise print to stderr, which is invisible in the
+        # --windowed exe (no console) - surface them instead of failing silently.
+        import traceback
+
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+        try:
+            self.messagebox.showerror("KryptikClicks - unexpected error", f"{exc_type.__name__}: {exc_value}")
+        except Exception:
+            pass
+
     # --- styling ---
     def _configure_styles(self):
         c = self.COLORS
@@ -463,6 +509,29 @@ class KryptikClicksGUI:
             darkcolor=c["panel_bg"],
         )
         s.map("Field.TEntry", bordercolor=[("focus", c["accent"])])
+
+        s.configure(
+            "Field.TCombobox",
+            padding=6,
+            relief="flat",
+            fieldbackground=c["panel_bg"],
+            background=c["panel_bg"],
+            foreground=c["text"],
+            arrowcolor=c["muted"],
+            bordercolor=c["border"],
+            lightcolor=c["panel_bg"],
+            darkcolor=c["panel_bg"],
+        )
+        s.map(
+            "Field.TCombobox",
+            fieldbackground=[("readonly", c["panel_bg"])],
+            foreground=[("readonly", c["text"])],
+            bordercolor=[("focus", c["accent"])],
+        )
+        self.root.option_add("*TCombobox*Listbox.background", c["panel_bg"])
+        self.root.option_add("*TCombobox*Listbox.foreground", c["text"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", c["accent"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", c["text"])
 
         for name, base, dark in (
             ("Accent", c["accent"], c["accent_dark"]),
@@ -568,6 +637,18 @@ class KryptikClicksGUI:
             "may miss it if rendering shifts slightly. Lower = more lenient but may misfire on "
             "similar-looking content. 0.85 is a good default.",
         )
+
+        button_label = tk.Label(
+            settings, text="Click button", bg=c["bg"], fg=c["text"], font=(FONT, 9),
+            cursor="question_arrow",
+        )
+        button_label.grid(row=3, column=0, sticky="w", pady=7)
+        self._add_tooltip(button_label, "Which mouse button to click with when the trigger is detected.")
+        self.button_var = tk.StringVar(value=self.cfg["click_button"])
+        ttk.Combobox(
+            settings, textvariable=self.button_var, values=CLICK_BUTTONS, width=7,
+            style="Field.TCombobox", state="readonly",
+        ).grid(row=3, column=1, pady=7, sticky="e")
 
         ttk.Button(
             body, text="Save Settings", style="Accent.TButton", command=self.on_save_settings
@@ -706,6 +787,7 @@ class KryptikClicksGUI:
         self.cfg["min_delay_ms"] = min_ms
         self.cfg["max_delay_ms"] = max_ms
         self.cfg["match_threshold"] = thr
+        self.cfg["click_button"] = self.button_var.get()
         save_config(self.cfg)
         self.log("Settings saved.")
 

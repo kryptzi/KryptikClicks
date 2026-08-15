@@ -49,6 +49,7 @@ python KryptikClicks.py --headless  # run the watcher from a terminal, no GUI
 - **Match threshold (0-1)** — how closely the screen must match your captured
   trigger image to fire clicking. Higher = stricter/fewer false triggers;
   lower = more lenient but may misfire. `0.85` is a good default.
+- **Click button** — left, right, or middle mouse button.
 
 Your capture and settings are saved automatically and reloaded next time you
 open the app — you only need to capture once, unless you want to change what
