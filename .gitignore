@@ -1,0 +1,13 @@
+# Per-user capture/config (generated at runtime, not shared)
+trigger_template.png
+click_target.txt
+kryptikclicks_config.json
+
+# Python
+__pycache__/
+*.pyc
+
+# PyInstaller build output
+build/
+dist/
+*.spec
