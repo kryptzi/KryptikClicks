@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -536,6 +536,13 @@ class Detector:
     """Loads the template/target and does the screen-matching + clicking work.
     Shared by both the GUI and the headless CLI mode."""
 
+    # In cursor-position mode, the longest we'll wait for the local region around
+    # a detected trigger to read as "gone" before clicking again anyway. Ambient
+    # game content near the trigger (not the trigger itself) can keep scoring as
+    # a match indefinitely, which without this cap can starve real re-clicks for
+    # a very long time (observed: 36+ seconds during actual gameplay).
+    CURSOR_MODE_MAX_WAIT_SECONDS = 2.0
+
     def __init__(self, cfg, log=print):
         import cv2
         import mss
@@ -816,11 +823,20 @@ class Detector:
                         # the trigger - so unlike fixed-position mode, clicking doesn't make
                         # the trigger go away on its own. Wait for it to actually disappear
                         # before treating a later sighting as a new detection, instead of
-                        # re-clicking every cycle while it just sits there.
+                        # re-clicking every cycle while it just sits there. But don't wait
+                        # forever - ambient content near the trigger can keep the local
+                        # region reading as a match well after the real trigger is gone.
+                        wait_start = time.monotonic()
+                        timed_out = False
                         while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
+                            if time.monotonic() - wait_start > self.CURSOR_MODE_MAX_WAIT_SECONDS:
+                                timed_out = True
+                                break
                             time.sleep(SCAN_INTERVAL)
                             scan_tick()
                             match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
+                        if timed_out:
+                            continue  # still (probably) there - click again rather than wait longer
                         break
                     sleep_between_clicks()
                     scan_tick()

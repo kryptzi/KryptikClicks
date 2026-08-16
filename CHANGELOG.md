@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-15
+
+### Fixed
+- **Critical: cursor-position mode could go up to 36+ seconds without
+  re-clicking during real use.** After clicking once, it waits for the
+  local area around the trigger to read as "gone" before it's willing to
+  click again - but ambient content near the trigger (not the trigger
+  itself) can keep that local check reading as a match well after the real
+  trigger is gone, so the wait had no upper bound. It now gives up waiting
+  after 2 seconds and clicks again regardless, rather than potentially
+  never re-clicking at all.
+
 ## [1.4.0] - 2026-08-15
 
 ### Added
@@ -173,7 +185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.5...v1.4.0
 [1.3.5]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.3...v1.3.4

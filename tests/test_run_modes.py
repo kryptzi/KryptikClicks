@@ -141,6 +141,45 @@ def test_targeted_cursor_mode_clicks_once_then_waits_for_trigger_to_disappear(kc
     assert d.total_clicks == 1
 
 
+def test_targeted_cursor_mode_clicks_again_after_max_wait_even_if_still_matching(kc, monkeypatch):
+    # If the local region keeps scoring as a match - ambient game content near
+    # the trigger, not necessarily the exact trigger persisting - waiting for
+    # a clean "disappeared" reading can take far too long in practice (real
+    # observed case: 36 seconds with no re-click during actual gameplay).
+    # There must be a hard cap on how long it waits before clicking again
+    # regardless of whether the local region still reads as a match.
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["click_position"] = "cursor"
+    cfg["min_delay_ms"] = 0
+    cfg["max_delay_ms"] = 1
+
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "CURSOR_MODE_MAX_WAIT_SECONDS", 0.05)
+
+    # Simulate a local region that never stops matching (the bug scenario).
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
+
+    calls = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(pyautogui, "position", lambda: (5, 5))
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    t.join(0.5)  # many multiples of the 0.05s max-wait should have elapsed
+    d.stop_event.set()
+    t.join(2.0)
+
+    # Without the timeout safety valve this would be stuck at exactly 1.
+    assert len(calls) >= 3
+
+
 def test_targeted_mode_scans_per_physical_monitor_not_the_combined_desktop(kc, monkeypatch):
     # A single scan against the full multi-monitor virtual desktop is slow (hundreds of
     # ms), which can miss a trigger that only flashes on screen briefly. Scanning each
