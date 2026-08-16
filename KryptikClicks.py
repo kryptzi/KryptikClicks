@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -124,10 +124,19 @@ def canvas_point_to_absolute(canvas_x, canvas_y, monitor):
 
 
 def run_capture_ui(parent=None, require_click_point=True):
-    """Shows the fullscreen capture overlay: drag-select the trigger image, then
+    """Shows the capture overlay: drag-select the trigger image, then
     (if require_click_point) click the spot to auto-click. Pass require_click_point=False
     to skip that second step - used when the click position will be the live cursor
     position instead of a captured point.
+
+    On multi-monitor setups this shows one overlay window per physical monitor
+    (each sized to just that monitor) rather than one giant window spanning
+    the whole virtual desktop - a single override-redirect window sized to
+    span multiple monitors was found to not actually get painted by Windows'
+    compositor, leaving an invisible-but-topmost dead zone. Per-monitor
+    windows are normal-sized and render reliably, and the drag/click can
+    start on whichever monitor the mouse is already on.
+
     Returns (template_box, target_point, full_img), or (None, None, None) if cancelled.
     Pass a Tkinter root as `parent` to run modally inside an existing app; omit for standalone use.
     """
@@ -136,87 +145,130 @@ def run_capture_ui(parent=None, require_click_point=True):
     import mss
 
     with mss.mss() as sct:
-        monitor = sct.monitors[0]
-        shot = sct.grab(monitor)
+        virtual = sct.monitors[0]
+        shot = sct.grab(virtual)
         full_img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+        physical_monitors = sct.monitors[1:] or [virtual]
 
     standalone = parent is None
-    win = tk.Tk() if standalone else tk.Toplevel(parent)
-    win.attributes("-fullscreen", True)
-    win.attributes("-topmost", True)
-    win.configure(cursor="crosshair")
-    if not standalone:
-        win.grab_set()
-
-    tk_img = ImageTk.PhotoImage(full_img, master=win)
-    canvas = tk.Canvas(win, width=full_img.width, height=full_img.height, highlightthickness=0)
-    canvas.pack(fill="both", expand=True)
-    canvas.create_image(0, 0, image=tk_img, anchor="nw")
-    canvas.image = tk_img  # keep a reference alive
+    controller = tk.Tk() if standalone else tk.Toplevel(parent)
+    controller.withdraw()  # invisible; just coordinates the per-monitor windows and blocks until done
 
     step1_text = (
         "Step 1/2: Drag a tight box around the trigger you want it to watch for, then release. Esc to cancel."
         if require_click_point else
         "Drag a tight box around the trigger you want it to watch for, then release. Esc to cancel."
     )
-    label = tk.Label(win, text=step1_text, bg="yellow")
-    label.place(x=10, y=10)
 
-    state = {"phase": 1, "start": None, "rect": None, "template_box": None, "target_point": None}
+    state = {
+        "phase": 1, "start": None, "start_mon": None, "rect": None, "rect_canvas": None,
+        "template_box": None, "target_point": None, "done": False,
+    }
+    windows = []
+    labels = []
 
-    def on_press(event):
-        if state["phase"] == 1:
-            state["start"] = (event.x, event.y)
-            if state["rect"] is not None:
-                canvas.delete(state["rect"])
-            state["rect"] = canvas.create_rectangle(
-                event.x, event.y, event.x, event.y, outline="red", width=2
-            )
-        elif state["phase"] == 2:
-            state["target_point"] = canvas_point_to_absolute(event.x, event.y, monitor)
-            canvas.create_oval(
-                event.x - 6, event.y - 6, event.x + 6, event.y + 6, outline="lime", width=3
-            )
-            win.after(250, win.destroy)
+    def set_label_text(text):
+        for lbl in labels:
+            lbl.config(text=text)
 
-    def on_drag(event):
-        if state["phase"] != 1 or state["start"] is None:
+    def finish():
+        if state["done"]:
             return
-        x0, y0 = state["start"]
-        canvas.coords(state["rect"], x0, y0, event.x, event.y)
+        state["done"] = True
+        for w in windows:
+            w.destroy()
+        controller.destroy()
 
-    def on_release(event):
-        if state["phase"] != 1 or state["start"] is None:
-            return
-        x0, y0 = state["start"]
-        x1, y1 = event.x, event.y
-        left, right = sorted((x0, x1))
-        top, bottom = sorted((y0, y1))
-        if right - left < 3 or bottom - top < 3:
-            return
-        state["template_box"] = (left, top, right, bottom)
-        if require_click_point:
-            state["phase"] = 2
-            label.config(
-                text="Step 2/2: Click the spot you want it to auto-click. Esc to cancel."
-            )
-        else:
-            win.destroy()
-
-    def on_escape(event):
+    def on_escape(_event):
         state["template_box"] = None
         state["target_point"] = None
-        win.destroy()
+        finish()
 
-    canvas.bind("<ButtonPress-1>", on_press)
-    canvas.bind("<B1-Motion>", on_drag)
-    canvas.bind("<ButtonRelease-1>", on_release)
-    win.bind("<Escape>", on_escape)
+    def make_handlers(mon, canvas):
+        def on_press(event):
+            if state["phase"] == 1:
+                state["start"] = (event.x, event.y)
+                state["start_mon"] = mon
+                if state["rect"] is not None:
+                    state["rect_canvas"].delete(state["rect"])
+                state["rect"] = canvas.create_rectangle(
+                    event.x, event.y, event.x, event.y, outline="red", width=2
+                )
+                state["rect_canvas"] = canvas
+            elif state["phase"] == 2:
+                state["target_point"] = canvas_point_to_absolute(event.x, event.y, mon)
+                canvas.create_oval(
+                    event.x - 6, event.y - 6, event.x + 6, event.y + 6, outline="lime", width=3
+                )
+                controller.after(250, finish)
+
+        def on_drag(event):
+            if state["phase"] != 1 or state["start"] is None or state["start_mon"] is not mon:
+                return
+            x0, y0 = state["start"]
+            canvas.coords(state["rect"], x0, y0, event.x, event.y)
+
+        def on_release(event):
+            if state["phase"] != 1 or state["start"] is None or state["start_mon"] is not mon:
+                return
+            x0, y0 = state["start"]
+            x1, y1 = event.x, event.y
+            left, right = sorted((x0, x1))
+            top, bottom = sorted((y0, y1))
+            if right - left < 3 or bottom - top < 3:
+                return
+            abs_left, abs_top = canvas_point_to_absolute(left, top, mon)
+            abs_right, abs_bottom = canvas_point_to_absolute(right, bottom, mon)
+            # template_box indexes into full_img, which starts at the virtual desktop's own origin.
+            state["template_box"] = (
+                abs_left - virtual["left"], abs_top - virtual["top"],
+                abs_right - virtual["left"], abs_bottom - virtual["top"],
+            )
+            if require_click_point:
+                state["phase"] = 2
+                set_label_text("Step 2/2: Click the spot you want it to auto-click. Esc to cancel.")
+            else:
+                controller.after(0, finish)
+
+        return on_press, on_drag, on_release
+
+    for mon in physical_monitors:
+        left = mon["left"] - virtual["left"]
+        top = mon["top"] - virtual["top"]
+        crop = full_img.crop((left, top, left + mon["width"], top + mon["height"]))
+
+        w = tk.Toplevel(controller)
+        w.overrideredirect(True)
+        w.geometry(f"{mon['width']}x{mon['height']}+{mon['left']}+{mon['top']}")
+        w.attributes("-topmost", True)
+        w.configure(cursor="crosshair")
+
+        tk_img = ImageTk.PhotoImage(crop, master=w)
+        canvas = tk.Canvas(w, width=mon["width"], height=mon["height"], highlightthickness=0)
+        canvas.pack(fill="both", expand=True)
+        canvas.create_image(0, 0, image=tk_img, anchor="nw")
+        canvas.image = tk_img  # keep a reference alive
+
+        label = tk.Label(w, text=step1_text, bg="yellow")
+        label.place(x=10, y=10)
+        labels.append(label)
+
+        on_press, on_drag, on_release = make_handlers(mon, canvas)
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_drag)
+        canvas.bind("<ButtonRelease-1>", on_release)
+        w.bind("<Escape>", on_escape)
+        windows.append(w)
+
+    if windows:
+        windows[0].focus_force()
+    if not standalone:
+        controller.grab_set()
 
     if standalone:
-        win.mainloop()
+        controller.mainloop()
     else:
-        parent.wait_window(win)
+        parent.wait_window(controller)
 
     if state["template_box"] is None:
         return None, None, None

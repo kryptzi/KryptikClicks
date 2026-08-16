@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-15
+
+### Fixed
+- On multi-monitor setups, the capture overlay (drag-select the trigger,
+  pick a click point) was a single window sized to span every monitor at
+  once. Windows' compositor silently failed to actually paint a window that
+  large, leaving it reachable only on whichever monitor a small leftover
+  sliver happened to land on — forcing you to drag other windows onto that
+  specific screen just to use it. Replaced with one normal-sized overlay
+  window per physical monitor, so capture now works starting from whichever
+  screen your mouse is already on.
+
 ## [1.3.0] - 2026-08-15
 
 ### Changed
@@ -83,7 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.0.0...v1.1.0
