@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,7 +57,7 @@ DEFAULT_CONFIG = {
 CLICK_BUTTONS = ["left", "right", "middle"]
 CLICK_MODES = ["targeted", "generic"]
 CLICK_POSITIONS = ["fixed", "cursor"]
-SCAN_INTERVAL = 0.08      # seconds between screen scans while idle/watching
+SCAN_INTERVAL = 0.02      # seconds between screen scans while idle/watching
 TOGGLE_HOTKEY = "f6"
 QUIT_HOTKEY = "f9"
 # ---------------------------------------------------------------------------
@@ -434,6 +434,7 @@ class Detector:
     def run(self):
         """Blocks, running the scan/click loop until stop_event is set."""
         import pyautogui
+        import concurrent.futures
 
         pyautogui.FAILSAFE = False
         pyautogui.PAUSE = 0  # we control click timing ourselves
@@ -442,17 +443,22 @@ class Detector:
         # gradually slows down; periodically recreating it keeps capture speed steady.
         MSS_REFRESH_INTERVAL = 300
         sct = self.mss.mss()
-        monitor = sct.monitors[0]
+        monitors = sct.monitors[1:] or [sct.monitors[0]]
         scan_count = 0
         last_error_log = 0.0
+        # Scanning one region spanning every monitor at once is slow (hundreds of ms on
+        # a large multi-monitor desktop) and can miss a trigger that only flashes briefly.
+        # Scanning each physical monitor in its own thread instead cuts that latency
+        # roughly to the slowest single monitor rather than the sum of all of them.
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(monitors)))
 
         def scan_tick():
-            nonlocal sct, monitor, scan_count
+            nonlocal sct, monitors, scan_count
             scan_count += 1
             if scan_count % MSS_REFRESH_INTERVAL == 0:
                 sct.close()
                 sct = self.mss.mss()
-                monitor = sct.monitors[0]
+                monitors = sct.monitors[1:] or [sct.monitors[0]]
 
         def safe_find_match(region):
             # A transient capture/match error shouldn't permanently kill background
@@ -466,6 +472,37 @@ class Detector:
                     self.log(f"Scan error (continuing): {e}")
                     last_error_log = now
                 return None
+
+        def safe_find_match_threaded(region):
+            # mss instances aren't thread-safe, so each worker thread grabs its own.
+            nonlocal last_error_log
+            try:
+                with self.mss.mss() as thread_sct:
+                    return self._find_match_in(thread_sct, region)
+            except Exception as e:
+                now = time.monotonic()
+                if now - last_error_log > 5.0:
+                    self.log(f"Scan error (continuing): {e}")
+                    last_error_log = now
+                return None
+
+        def scan_all_monitors():
+            """Checks every physical monitor for the trigger; returns (match_xy, monitor)
+            for whichever one finds it first, or (None, None) if none do."""
+            if len(monitors) == 1:
+                return safe_find_match(monitors[0]), monitors[0]
+            future_to_monitor = {
+                executor.submit(safe_find_match_threaded, mon): mon for mon in monitors
+            }
+            try:
+                for future in concurrent.futures.as_completed(future_to_monitor):
+                    result = future.result()
+                    if result is not None:
+                        return result, future_to_monitor[future]
+            finally:
+                for future in future_to_monitor:
+                    future.cancel()
+            return None, None
 
         def sleep_between_clicks():
             min_d = self.cfg["min_delay_ms"] / 1000.0
@@ -497,7 +534,7 @@ class Detector:
                     continue
 
                 scan_tick()
-                match = safe_find_match(monitor)
+                match, hit_monitor = scan_all_monitors()
                 if match is None:
                     time.sleep(SCAN_INTERVAL)
                     continue
@@ -517,13 +554,14 @@ class Detector:
                         while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
                             time.sleep(SCAN_INTERVAL)
                             scan_tick()
-                            match = safe_find_match(self._local_region_around(match[0], match[1], monitor))
+                            match = safe_find_match(self._local_region_around(match[0], match[1], hit_monitor))
                         break
                     sleep_between_clicks()
                     scan_tick()
-                    match = safe_find_match(self._local_region_around(match[0], match[1], monitor))
+                    match = safe_find_match(self._local_region_around(match[0], match[1], hit_monitor))
                 self.log(f"Stopped clicking ({self.total_clicks} clicks this session).")
         finally:
+            executor.shutdown(wait=False)
             sct.close()
 
 

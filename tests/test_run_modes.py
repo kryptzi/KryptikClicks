@@ -139,3 +139,56 @@ def test_targeted_cursor_mode_clicks_once_then_waits_for_trigger_to_disappear(kc
 
     assert len(calls) == 1
     assert d.total_clicks == 1
+
+
+def test_targeted_mode_scans_per_physical_monitor_not_the_combined_desktop(kc, monkeypatch):
+    # A single scan against the full multi-monitor virtual desktop is slow (hundreds of
+    # ms), which can miss a trigger that only flashes on screen briefly. Scanning each
+    # physical monitor separately (and in parallel) is much faster - this verifies the
+    # scan loop checks per-monitor regions instead of one giant combined-desktop region.
+    import mss
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+    with open(kc.TARGET_PATH, "w") as f:
+        f.write("5,5")
+
+    with mss.mss() as sct:
+        physical_bounds = {
+            (m["left"], m["top"], m["width"], m["height"]) for m in sct.monitors[1:]
+        }
+        full_desktop = sct.monitors[0]
+        combined_desktop_bounds = (
+            full_desktop["left"], full_desktop["top"], full_desktop["width"], full_desktop["height"],
+        )
+    if len(physical_bounds) < 2:
+        pytest.skip("needs a multi-monitor setup to meaningfully exercise per-monitor scanning")
+    target_bounds = next(iter(physical_bounds))
+
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["click_limit"] = 1
+    cfg["min_delay_ms"] = 0
+    cfg["max_delay_ms"] = 1
+
+    d = kc.Detector(cfg, log=lambda m: None)
+
+    seen_bounds = []
+
+    def fake_find_match(self, sct, region):
+        b = (region["left"], region["top"], region["width"], region["height"])
+        seen_bounds.append(b)
+        return (5, 5) if b == target_bounds else None
+
+    monkeypatch.setattr(kc.Detector, "_find_match_in", fake_find_match)
+
+    calls = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: calls.append(a))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    assert len(calls) == 1
+    assert combined_desktop_bounds not in seen_bounds
+    assert target_bounds in seen_bounds

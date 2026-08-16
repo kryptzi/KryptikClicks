@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-08-15
+
+### Changed
+- Detection latency reduced sharply on multi-monitor setups: the app used to
+  scan one region spanning the entire multi-monitor desktop for the trigger,
+  which took 350-450ms per scan on a 3-monitor desktop — long enough that a
+  trigger that only flashes on screen briefly could be missed entirely, or
+  detected so late the click landed well after it appeared. It now scans each
+  physical monitor in parallel instead, cutting that down to roughly the cost
+  of scanning the single slowest monitor (~130-140ms measured on a 3-monitor
+  desktop) rather than the sum of all of them. The idle poll interval between
+  scans was also lowered (80ms to 20ms) now that it's no longer the dominant
+  source of delay.
+
 ## [1.3.2] - 2026-08-15
 
 ### Changed
@@ -112,7 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.2.0...v1.3.0
