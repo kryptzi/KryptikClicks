@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.3.3"
+__version__ = "1.3.4"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -402,16 +402,23 @@ class Detector:
         except Exception:
             pass
 
-    def _find_match_in(self, sct, region):
+    def _match_score_in(self, sct, region):
+        """Grabs and matches `region`, returning (x, y, confidence) for the best spot
+        found - regardless of whether it clears match_threshold. Confidence is directly
+        comparable across separate regions/monitors, unlike a plain hit/miss result."""
         shot = sct.grab(region)
         import numpy as np
         frame = np.array(shot)  # BGRA
         gray = self.cv2.cvtColor(frame, self.cv2.COLOR_BGRA2GRAY)
         result = self.cv2.matchTemplate(gray, self.template, self.cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = self.cv2.minMaxLoc(result)
+        x = region["left"] + max_loc[0] + self.t_w // 2
+        y = region["top"] + max_loc[1] + self.t_h // 2
+        return x, y, max_val
+
+    def _find_match_in(self, sct, region):
+        x, y, max_val = self._match_score_in(sct, region)
         if max_val >= self.cfg["match_threshold"]:
-            x = region["left"] + max_loc[0] + self.t_w // 2
-            y = region["top"] + max_loc[1] + self.t_h // 2
             return x, y
         return None
 
@@ -473,12 +480,12 @@ class Detector:
                     last_error_log = now
                 return None
 
-        def safe_find_match_threaded(region):
+        def safe_score_threaded(region):
             # mss instances aren't thread-safe, so each worker thread grabs its own.
             nonlocal last_error_log
             try:
                 with self.mss.mss() as thread_sct:
-                    return self._find_match_in(thread_sct, region)
+                    return self._match_score_in(thread_sct, region)
             except Exception as e:
                 now = time.monotonic()
                 if now - last_error_log > 5.0:
@@ -487,22 +494,27 @@ class Detector:
                 return None
 
         def scan_all_monitors():
-            """Checks every physical monitor for the trigger; returns (match_xy, monitor)
-            for whichever one finds it first, or (None, None) if none do."""
+            """Checks every physical monitor for the trigger and returns (match_xy,
+            monitor) for whichever has the strongest match, or (None, None) if none
+            clear the threshold. Waits for every monitor rather than racing to whichever
+            finishes first - ordinary content on an unrelated monitor can score close to
+            a real match, so taking the fastest result instead of the best one can pick
+            a false positive over the real match elsewhere."""
             if len(monitors) == 1:
                 return safe_find_match(monitors[0]), monitors[0]
-            future_to_monitor = {
-                executor.submit(safe_find_match_threaded, mon): mon for mon in monitors
-            }
-            try:
-                for future in concurrent.futures.as_completed(future_to_monitor):
-                    result = future.result()
-                    if result is not None:
-                        return result, future_to_monitor[future]
-            finally:
-                for future in future_to_monitor:
-                    future.cancel()
-            return None, None
+            futures = {executor.submit(safe_score_threaded, mon): mon for mon in monitors}
+            best = None  # (max_val, x, y, monitor)
+            for future, mon in futures.items():
+                result = future.result()
+                if result is None:
+                    continue
+                x, y, max_val = result
+                if max_val >= self.cfg["match_threshold"] and (best is None or max_val > best[0]):
+                    best = (max_val, x, y, mon)
+            if best is None:
+                return None, None
+            _, x, y, mon = best
+            return (x, y), mon
 
         def sleep_between_clicks():
             min_d = self.cfg["min_delay_ms"] / 1000.0

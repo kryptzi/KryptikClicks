@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-08-15
+
+### Fixed
+- **Regression from 1.3.3:** the new per-monitor parallel scan picked whichever
+  monitor's scan thread finished first, not whichever actually had the
+  strongest match. Ordinary desktop content on an unrelated monitor (icons,
+  taskbar, wallpaper) can score close enough to a real match to clear a
+  normal threshold, so a false positive on the wrong monitor could beat the
+  real detection to the finish line - making it seem like detection wasn't
+  working at all, even at a very low match threshold. It now waits for every
+  monitor's scan and picks the single best-scoring match across all of them,
+  instead of racing.
+
 ## [1.3.3] - 2026-08-15
 
 ### Changed
@@ -126,7 +139,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.4...HEAD
+[1.3.4]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.0...v1.3.1

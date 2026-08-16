@@ -61,7 +61,7 @@ def test_targeted_mode_only_clicks_while_a_match_is_found_and_stops_at_limit(kc,
     d = kc.Detector(cfg, log=lambda m: None)
 
     # Simulate the trigger being permanently visible so we don't depend on real screen content.
-    monkeypatch.setattr(kc.Detector, "_find_match_in", lambda self, sct, region: (5, 5))
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
 
     calls = []
     import pyautogui
@@ -86,7 +86,7 @@ def test_targeted_mode_does_not_click_when_nothing_matches(kc, monkeypatch):
     cfg["click_mode"] = "targeted"
 
     d = kc.Detector(cfg, log=lambda m: None)
-    monkeypatch.setattr(kc.Detector, "_find_match_in", lambda self, sct, region: None)
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (0, 0, 0.0))
 
     calls = []
     import pyautogui
@@ -123,7 +123,7 @@ def test_targeted_cursor_mode_clicks_once_then_waits_for_trigger_to_disappear(kc
     d = kc.Detector(cfg, log=lambda m: None)
 
     # Simulate the trigger being permanently visible so we don't depend on real screen content.
-    monkeypatch.setattr(kc.Detector, "_find_match_in", lambda self, sct, region: (5, 5))
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
 
     calls = []
     import pyautogui
@@ -175,12 +175,12 @@ def test_targeted_mode_scans_per_physical_monitor_not_the_combined_desktop(kc, m
 
     seen_bounds = []
 
-    def fake_find_match(self, sct, region):
+    def fake_score(self, sct, region):
         b = (region["left"], region["top"], region["width"], region["height"])
         seen_bounds.append(b)
-        return (5, 5) if b == target_bounds else None
+        return (5, 5, 1.0) if b == target_bounds else (0, 0, 0.0)
 
-    monkeypatch.setattr(kc.Detector, "_find_match_in", fake_find_match)
+    monkeypatch.setattr(kc.Detector, "_match_score_in", fake_score)
 
     calls = []
     import pyautogui
@@ -192,3 +192,66 @@ def test_targeted_mode_scans_per_physical_monitor_not_the_combined_desktop(kc, m
     assert len(calls) == 1
     assert combined_desktop_bounds not in seen_bounds
     assert target_bounds in seen_bounds
+
+
+def test_targeted_mode_picks_the_strongest_match_not_whichever_monitor_finishes_first(kc, monkeypatch):
+    # Ordinary desktop content on an unrelated monitor (icons, taskbar, wallpaper) can
+    # score close to a real match's threshold. Racing the per-monitor scans and taking
+    # whichever thread finishes first can pick that false positive over the real,
+    # higher-confidence match on a different monitor - it must always pick the best
+    # scoring candidate among all monitors, not the fastest one.
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+    with open(kc.TARGET_PATH, "w") as f:
+        f.write("5,5")
+
+    import mss
+    with mss.mss() as sct:
+        physical = sct.monitors[1:]
+    if len(physical) < 2:
+        pytest.skip("needs a multi-monitor setup to meaningfully exercise this")
+
+    weak_monitor = physical[0]
+    strong_monitor = physical[1]
+
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["click_position"] = "cursor"
+    cfg["click_limit"] = 2  # need to survive past the 1st click to see the local-region recheck
+    cfg["min_delay_ms"] = 0
+    cfg["max_delay_ms"] = 1
+    cfg["match_threshold"] = 0.1
+
+    d = kc.Detector(cfg, log=lambda m: None)
+
+    def fake_score(self, sct, region):
+        b = (region["left"], region["top"])
+        if b == (weak_monitor["left"], weak_monitor["top"]):
+            return (111, 222, 0.15)  # weak false positive, but still clears the threshold
+        if b == (strong_monitor["left"], strong_monitor["top"]):
+            return (333, 444, 0.95)  # the real match
+        return (0, 0, 0.0)
+
+    monkeypatch.setattr(kc.Detector, "_match_score_in", fake_score)
+
+    local_region_calls = []
+    real_local_region_around = kc.Detector._local_region_around
+
+    def spying_local_region_around(self, x, y, monitor):
+        local_region_calls.append((x, y))
+        return real_local_region_around(self, x, y, monitor)
+
+    monkeypatch.setattr(kc.Detector, "_local_region_around", spying_local_region_around)
+
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: None)
+    monkeypatch.setattr(pyautogui, "position", lambda: (0, 0))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    # The cursor-mode click loop re-derives the local region around the detected match
+    # point immediately after clicking - so whichever (x, y) shows up there tells us
+    # which monitor's result the scan actually used.
+    assert local_region_calls[0] == (333, 444)
