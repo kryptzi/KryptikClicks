@@ -255,3 +255,102 @@ def test_targeted_mode_picks_the_strongest_match_not_whichever_monitor_finishes_
     # point immediately after clicking - so whichever (x, y) shows up there tells us
     # which monitor's result the scan actually used.
     assert local_region_calls[0] == (333, 444)
+
+
+def test_window_mode_clicks_when_target_window_scan_finds_a_match(kc, monkeypatch):
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+    with open(kc.TARGET_PATH, "w") as f:
+        f.write("5,5")
+
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["scan_scope"] = "window"
+    cfg["scan_window_title"] = "RuneLite"
+    cfg["click_limit"] = 2
+    cfg["min_delay_ms"] = 0
+    cfg["max_delay_ms"] = 1
+
+    d = kc.Detector(cfg, log=lambda m: None)
+
+    window_region = {"left": 100, "top": 100, "width": 800, "height": 600}
+    monkeypatch.setattr(
+        kc.Detector, "_resolve_scan_regions",
+        lambda self, cached_hwnd, sct: ([window_region], 12345, "ok"),
+    )
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (150, 150, 1.0))
+
+    calls = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: calls.append(a))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    assert len(calls) == 2
+    assert d.total_clicks == 2
+
+
+def test_window_mode_idles_without_clicking_when_target_window_not_found(kc, monkeypatch):
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["scan_scope"] = "window"
+    cfg["scan_window_title"] = "Some App Not Open"
+
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(
+        kc.Detector, "_resolve_scan_regions",
+        lambda self, cached_hwnd, sct: ([], None, "not_found"),
+    )
+
+    calls = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: calls.append(a))
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    t.join(0.3)
+    d.stop_event.set()
+    t.join(2.0)
+
+    assert calls == []
+    assert d.total_clicks == 0
+    assert d.scanning_active.is_set() is True  # stays "on" and idles, doesn't auto-pause
+
+
+def test_window_mode_idles_without_clicking_when_target_window_minimized(kc, monkeypatch):
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["scan_scope"] = "window"
+    cfg["scan_window_title"] = "RuneLite"
+
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(
+        kc.Detector, "_resolve_scan_regions",
+        lambda self, cached_hwnd, sct: ([], 12345, "minimized"),
+    )
+
+    calls = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: calls.append(a))
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    t.join(0.3)
+    d.stop_event.set()
+    t.join(2.0)
+
+    assert calls == []
+    assert d.total_clicks == 0
+    assert d.scanning_active.is_set() is True

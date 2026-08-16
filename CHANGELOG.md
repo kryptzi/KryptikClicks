@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-15
+
+### Added
+- **Window-scoped scanning.** Targeted mode can now watch a single specific
+  window instead of every monitor - pick it from a Discord-style picker
+  (live thumbnail previews of every open window) under Settings > Scan area
+  > Specific window. This scans only that window's bounds, eliminating
+  false positives from unrelated content on other monitors entirely (rather
+  than just picking the best of them, as of 1.3.4), and it's faster since
+  there's far less area to check.
+  - Tracks the window by title, re-resolving it live each scan (not a fixed
+    handle), so it keeps working if the target app is closed and reopened.
+  - If the window is minimized or closed while scanning, it idles with a
+    status message and resumes automatically the moment it's back - no need
+    to pause/restart manually.
+  - "All monitors" (the previous behavior) is still the default.
+
 ## [1.3.5] - 2026-08-15
 
 ### Added
@@ -156,7 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.5...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.5...v1.4.0
 [1.3.5]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.2...v1.3.3

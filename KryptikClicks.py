@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.3.5"
+__version__ = "1.4.0"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -54,10 +54,13 @@ DEFAULT_CONFIG = {
     "click_limit": 0,
     "sound_enabled": False,
     "auto_update_check": True,
+    "scan_scope": "all_monitors",
+    "scan_window_title": "",
 }
 CLICK_BUTTONS = ["left", "right", "middle"]
 CLICK_MODES = ["targeted", "generic"]
 CLICK_POSITIONS = ["fixed", "cursor"]
+SCAN_SCOPES = ["all_monitors", "window"]
 SCAN_INTERVAL = 0.02      # seconds between screen scans while idle/watching
 TOGGLE_HOTKEY = "f6"
 QUIT_HOTKEY = "f9"
@@ -100,6 +103,10 @@ def load_config():
         cfg["sound_enabled"] = DEFAULT_CONFIG["sound_enabled"]
     if not isinstance(cfg.get("auto_update_check"), bool):
         cfg["auto_update_check"] = DEFAULT_CONFIG["auto_update_check"]
+    if cfg.get("scan_scope") not in SCAN_SCOPES:
+        cfg["scan_scope"] = DEFAULT_CONFIG["scan_scope"]
+    if not isinstance(cfg.get("scan_window_title"), str):
+        cfg["scan_window_title"] = DEFAULT_CONFIG["scan_window_title"]
 
     def is_number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -172,6 +179,154 @@ def check_for_update(current_version, fetcher=fetch_latest_release):
     if release is None:
         return None
     return find_update(release, current_version)
+
+
+def find_window_by_title(windows, title):
+    """Given a [(hwnd, title), ...] list (as returned by list_visible_windows()),
+    returns the hwnd of the first exact title match, or None."""
+    for hwnd, win_title in windows:
+        if win_title == title:
+            return hwnd
+    return None
+
+
+def list_visible_windows(exclude_hwnd=None):
+    """Enumerates visible, titled top-level windows for the window-scoped scan
+    picker. Skips windows with no title, DWM-cloaked windows (background UWP
+    apps that report as visible but aren't actually shown), and exclude_hwnd
+    (KryptikClicks' own window, so it can't target itself)."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    dwmapi = ctypes.windll.dwmapi
+    DWMWA_CLOAKED = 14
+
+    windows = []
+
+    def is_cloaked(hwnd):
+        cloaked = ctypes.c_int(0)
+        dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, ctypes.byref(cloaked), ctypes.sizeof(cloaked))
+        return cloaked.value != 0
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    def enum_handler(hwnd, lparam):
+        if exclude_hwnd is not None and hwnd == exclude_hwnd:
+            return True
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True
+        if is_cloaked(hwnd):
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = buf.value.strip()
+        if title:
+            windows.append((hwnd, title))
+        return True
+
+    user32.EnumWindows(enum_handler, 0)
+    return windows
+
+
+def get_window_rect(hwnd):
+    """Returns a monitor-shaped dict (left/top/width/height) for hwnd's current
+    on-screen bounds, via DWM's extended frame bounds (more accurate than
+    GetWindowRect - excludes the invisible resize-border padding Windows
+    10/11 adds), falling back to GetWindowRect if that call fails."""
+    import ctypes
+    from ctypes import wintypes
+
+    DWMWA_EXTENDED_FRAME_BOUNDS = 9
+    rect = wintypes.RECT()
+    result = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+        hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(rect), ctypes.sizeof(rect)
+    )
+    if result != 0:
+        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    return {
+        "left": rect.left,
+        "top": rect.top,
+        "width": rect.right - rect.left,
+        "height": rect.bottom - rect.top,
+    }
+
+
+def is_window_valid(hwnd):
+    import ctypes
+    return bool(ctypes.windll.user32.IsWindow(hwnd))
+
+
+def is_window_minimized(hwnd):
+    import ctypes
+    return bool(ctypes.windll.user32.IsIconic(hwnd))
+
+
+def capture_window_thumbnail(hwnd, max_size=(160, 100)):
+    """Captures hwnd's current appearance (even if occluded or behind other
+    windows) via PrintWindow, returning a PIL Image thumbnail. Returns None if
+    the window has no size, or the capture comes back blank - some
+    GPU-accelerated windows (some games/browsers) don't render via
+    PrintWindow, and a blank thumbnail isn't useful for picking."""
+    import ctypes
+    from ctypes import wintypes
+    from PIL import Image
+
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
+    if width <= 0 or height <= 0:
+        return None
+
+    hwnd_dc = user32.GetWindowDC(hwnd)
+    mem_dc = gdi32.CreateCompatibleDC(hwnd_dc)
+    bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, width, height)
+    gdi32.SelectObject(mem_dc, bitmap)
+    try:
+        PW_RENDERFULLCONTENT = 2
+        user32.PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT)
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [
+                ("biSize", wintypes.DWORD),
+                ("biWidth", wintypes.LONG),
+                ("biHeight", wintypes.LONG),
+                ("biPlanes", wintypes.WORD),
+                ("biBitCount", wintypes.WORD),
+                ("biCompression", wintypes.DWORD),
+                ("biSizeImage", wintypes.DWORD),
+                ("biXPelsPerMeter", wintypes.LONG),
+                ("biYPelsPerMeter", wintypes.LONG),
+                ("biClrUsed", wintypes.DWORD),
+                ("biClrImportant", wintypes.DWORD),
+            ]
+
+        header = BITMAPINFOHEADER()
+        header.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        header.biWidth = width
+        header.biHeight = -height  # negative = top-down DIB, matches PIL's row order
+        header.biPlanes = 1
+        header.biBitCount = 32
+        header.biCompression = 0  # BI_RGB
+
+        buf = (ctypes.c_ubyte * (width * height * 4))()
+        gdi32.GetDIBits(mem_dc, bitmap, 0, height, buf, ctypes.byref(header), 0)
+    finally:
+        gdi32.DeleteObject(bitmap)
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(hwnd, hwnd_dc)
+
+    img = Image.frombuffer("RGB", (width, height), bytes(buf), "raw", "BGRX", 0, 1)
+    if img.getbbox() is None:  # fully blank - PrintWindow didn't actually render anything
+        return None
+    img.thumbnail(max_size)
+    return img
 
 
 def canvas_point_to_absolute(canvas_x, canvas_y, monitor):
@@ -481,6 +636,30 @@ class Detector:
             return x, y
         return None
 
+    def _resolve_scan_regions(self, cached_hwnd, sct):
+        """Returns (regions, hwnd, status) - the region(s) to scan this tick.
+        In "all_monitors" mode (default), regions is every physical monitor from
+        the given (already-open) mss instance, unchanged from before
+        window-scoped scanning existed. In "window" mode, regions is a
+        single-item list for the configured target window's live bounds,
+        re-resolving cached_hwnd by title whenever it's no longer valid (the
+        target app may have been restarted, getting a new hwnd) rather than
+        caching it long-term. status is "ok", "minimized", or "not_found" - the
+        latter two mean regions is empty, meaning there's nothing to scan this
+        tick (idle, not a miss)."""
+        if self.cfg.get("scan_scope") != "window":
+            monitors = sct.monitors[1:] or [sct.monitors[0]]
+            return monitors, None, "ok"
+
+        hwnd = cached_hwnd
+        if hwnd is None or not is_window_valid(hwnd):
+            hwnd = find_window_by_title(list_visible_windows(), self.cfg.get("scan_window_title", ""))
+        if hwnd is None:
+            return [], None, "not_found"
+        if is_window_minimized(hwnd):
+            return [], hwnd, "minimized"
+        return [get_window_rect(hwnd)], hwnd, "ok"
+
     def _local_region_around(self, x, y, monitor):
         pad = 60
         left = max(monitor["left"], x - self.t_w // 2 - pad)
@@ -509,22 +688,24 @@ class Detector:
         # gradually slows down; periodically recreating it keeps capture speed steady.
         MSS_REFRESH_INTERVAL = 300
         sct = self.mss.mss()
-        monitors = sct.monitors[1:] or [sct.monitors[0]]
         scan_count = 0
         last_error_log = 0.0
+        cached_hwnd = None
+        last_window_status = None
         # Scanning one region spanning every monitor at once is slow (hundreds of ms on
         # a large multi-monitor desktop) and can miss a trigger that only flashes briefly.
         # Scanning each physical monitor in its own thread instead cuts that latency
-        # roughly to the slowest single monitor rather than the sum of all of them.
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(monitors)))
+        # roughly to the slowest single monitor rather than the sum of all of them. Sized
+        # from the monitor count regardless of scan_scope - window mode only ever submits
+        # one task, so a bigger pool just sits idle rather than causing any problem.
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(sct.monitors[1:])))
 
         def scan_tick():
-            nonlocal sct, monitors, scan_count
+            nonlocal sct, scan_count
             scan_count += 1
             if scan_count % MSS_REFRESH_INTERVAL == 0:
                 sct.close()
                 sct = self.mss.mss()
-                monitors = sct.monitors[1:] or [sct.monitors[0]]
 
         def safe_find_match(region):
             # A transient capture/match error shouldn't permanently kill background
@@ -552,28 +733,28 @@ class Detector:
                     last_error_log = now
                 return None
 
-        def scan_all_monitors():
-            """Checks every physical monitor for the trigger and returns (match_xy,
-            monitor) for whichever has the strongest match, or (None, None) if none
-            clear the threshold. Waits for every monitor rather than racing to whichever
-            finishes first - ordinary content on an unrelated monitor can score close to
-            a real match, so taking the fastest result instead of the best one can pick
-            a false positive over the real match elsewhere."""
-            if len(monitors) == 1:
-                return safe_find_match(monitors[0]), monitors[0]
-            futures = {executor.submit(safe_score_threaded, mon): mon for mon in monitors}
-            best = None  # (max_val, x, y, monitor)
-            for future, mon in futures.items():
+        def scan_regions(regions):
+            """Checks the given region(s) for the trigger and returns (match_xy,
+            region) for whichever has the strongest match, or (None, None) if none
+            clear the threshold. Waits for every region rather than racing to
+            whichever finishes first - ordinary content in an unrelated region can
+            score close to a real match, so taking the fastest result instead of
+            the best one can pick a false positive over the real match elsewhere."""
+            if len(regions) == 1:
+                return safe_find_match(regions[0]), regions[0]
+            futures = {executor.submit(safe_score_threaded, r): r for r in regions}
+            best = None  # (max_val, x, y, region)
+            for future, r in futures.items():
                 result = future.result()
                 if result is None:
                     continue
                 x, y, max_val = result
                 if max_val >= self.cfg["match_threshold"] and (best is None or max_val > best[0]):
-                    best = (max_val, x, y, mon)
+                    best = (max_val, x, y, r)
             if best is None:
                 return None, None
-            _, x, y, mon = best
-            return (x, y), mon
+            _, x, y, r = best
+            return (x, y), r
 
         def sleep_between_clicks():
             min_d = self.cfg["min_delay_ms"] / 1000.0
@@ -605,7 +786,21 @@ class Detector:
                     continue
 
                 scan_tick()
-                match, hit_monitor = scan_all_monitors()
+                regions, cached_hwnd, status = self._resolve_scan_regions(cached_hwnd, sct)
+                if status != last_window_status:
+                    if status == "not_found":
+                        title = self.cfg.get("scan_window_title", "")
+                        self.log(f'Target window "{title}" not found - waiting...')
+                    elif status == "minimized":
+                        self.log("Target window is minimized - waiting...")
+                    elif status == "ok" and last_window_status in ("not_found", "minimized"):
+                        self.log("Target window found - resuming scan.")
+                    last_window_status = status
+                if not regions:
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+
+                match, hit_region = scan_regions(regions)
                 if match is None:
                     time.sleep(SCAN_INTERVAL)
                     continue
@@ -625,11 +820,11 @@ class Detector:
                         while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
                             time.sleep(SCAN_INTERVAL)
                             scan_tick()
-                            match = safe_find_match(self._local_region_around(match[0], match[1], hit_monitor))
+                            match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
                         break
                     sleep_between_clicks()
                     scan_tick()
-                    match = safe_find_match(self._local_region_around(match[0], match[1], hit_monitor))
+                    match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
                 self.log(f"Stopped clicking ({self.total_clicks} clicks this session).")
         finally:
             executor.shutdown(wait=False)
@@ -947,6 +1142,34 @@ class KryptikClicksGUI:
             value="cursor", command=self._refresh_template_label, **radio_kwargs,
         ).pack(anchor="w")
 
+        self.scan_scope_frame = tk.Frame(body, bg=c["bg"])
+        self.scan_scope_frame.pack(fill="x", padx=20)
+        self.scan_scope_var = tk.StringVar(value=self.cfg["scan_scope"])
+        tk.Label(
+            self.scan_scope_frame, text="Scan area:", bg=c["bg"], fg=c["muted"], font=(FONT, 8)
+        ).pack(anchor="w", pady=(6, 2))
+        tk.Radiobutton(
+            self.scan_scope_frame, text="All monitors", variable=self.scan_scope_var,
+            value="all_monitors", command=self._on_scan_scope_changed, **radio_kwargs,
+        ).pack(anchor="w")
+        tk.Radiobutton(
+            self.scan_scope_frame, text="Specific window", variable=self.scan_scope_var,
+            value="window", command=self._on_scan_scope_changed, **radio_kwargs,
+        ).pack(anchor="w")
+
+        self.scan_window_title_var = tk.StringVar(value=self.cfg["scan_window_title"])
+        self.scan_window_display_var = tk.StringVar(
+            value=self._scan_window_display_text(self.cfg["scan_window_title"])
+        )
+        self.scan_window_row = tk.Frame(self.scan_scope_frame, bg=c["bg"])
+        tk.Label(
+            self.scan_window_row, textvariable=self.scan_window_display_var, bg=c["bg"],
+            fg=c["muted"], font=(FONT, 9), wraplength=260, justify="left",
+        ).pack(side="left")
+        ttk.Button(
+            self.scan_window_row, text="Choose Window...", command=self.on_choose_window,
+        ).pack(side="right")
+
         self.template_var = tk.StringVar(value="No template captured yet.")
         self.template_label = tk.Label(
             body, textvariable=self.template_var, bg=c["bg"], fg=c["muted"],
@@ -1087,6 +1310,7 @@ class KryptikClicksGUI:
         check_updates_link.bind("<Button-1>", lambda e: self.on_check_updates())
 
         self._on_mode_changed()
+        self._on_scan_scope_changed()
         self._maybe_auto_check_updates()
 
     def _on_mode_changed(self):
@@ -1094,6 +1318,104 @@ class KryptikClicksGUI:
         # both modes, so it's always shown - only the trigger-capture
         # requirement (Targeted needs a template; Generic doesn't) differs.
         self._refresh_template_label()
+
+    def _on_scan_scope_changed(self):
+        if self.scan_scope_var.get() == "window":
+            self.scan_window_row.pack(fill="x", pady=(4, 0))
+        else:
+            self.scan_window_row.pack_forget()
+
+    def _scan_window_display_text(self, title):
+        if not title:
+            return "No window selected."
+        try:
+            open_titles = {t for _, t in list_visible_windows()}
+        except Exception:
+            open_titles = set()
+        if title in open_titles:
+            return f'Target: "{title}"'
+        return f'Target: "{title}" (not currently open)'
+
+    def on_choose_window(self):
+        import ctypes
+        from tkinter import ttk
+
+        tk = self.tk
+        c = self.COLORS
+        FONT = self.FONT
+
+        picker = tk.Toplevel(self.root)
+        picker.title("Choose a window")
+        picker.configure(bg=c["bg"])
+        picker.transient(self.root)
+        picker.grab_set()
+        self._enable_dark_titlebar(picker)
+
+        canvas = tk.Canvas(picker, bg=c["bg"], highlightthickness=0, width=560, height=420)
+        scrollbar = ttk.Scrollbar(picker, orient="vertical", command=canvas.yview)
+        grid_frame = tk.Frame(canvas, bg=c["bg"])
+        grid_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=grid_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=10)
+        scrollbar.pack(side="right", fill="y", pady=10)
+
+        button_row = tk.Frame(picker, bg=c["bg"])
+        button_row.pack(fill="x", padx=10, pady=(0, 10))
+        thumb_refs = []  # keep PhotoImage references alive for the picker's lifetime
+
+        def select(title):
+            self.scan_window_title_var.set(title)
+            self.scan_window_display_var.set(self._scan_window_display_text(title))
+            picker.destroy()
+
+        def populate():
+            for widget in grid_frame.winfo_children():
+                widget.destroy()
+            thumb_refs.clear()
+
+            main_hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            picker_hwnd = ctypes.windll.user32.GetParent(picker.winfo_id()) or picker.winfo_id()
+            windows = [
+                w for w in list_visible_windows(exclude_hwnd=main_hwnd) if w[0] != picker_hwnd
+            ]
+
+            if not windows:
+                tk.Label(
+                    grid_frame, text="No other windows found. Open the app you want to\n"
+                    "monitor, then click Refresh.", bg=c["bg"], fg=c["muted"], font=(FONT, 9),
+                    justify="left",
+                ).grid(row=0, column=0, padx=10, pady=10, sticky="w")
+                return
+
+            cols = 3
+            from PIL import ImageTk
+            for i, (hwnd, title) in enumerate(windows):
+                cell = tk.Frame(grid_frame, bg=c["panel_bg"], cursor="hand2")
+                cell.grid(row=i // cols, column=i % cols, padx=6, pady=6)
+                img = capture_window_thumbnail(hwnd)
+                if img is not None:
+                    photo = ImageTk.PhotoImage(img, master=picker)
+                    thumb_refs.append(photo)
+                    thumb_label = tk.Label(cell, image=photo, bg=c["panel_bg"])
+                else:
+                    thumb_label = tk.Label(
+                        cell, text="(preview unavailable)", bg=c["panel_bg"], fg=c["muted"],
+                        width=20, height=6,
+                    )
+                thumb_label.pack(padx=4, pady=(4, 2))
+                name_label = tk.Label(
+                    cell, text=title, bg=c["panel_bg"], fg=c["text"], font=(FONT, 8),
+                    wraplength=150,
+                )
+                name_label.pack(padx=4, pady=(0, 4))
+                for widget in (cell, thumb_label, name_label):
+                    widget.bind("<Button-1>", lambda e, t=title: select(t))
+
+        ttk.Button(button_row, text="Refresh", command=populate).pack(side="left")
+        ttk.Button(button_row, text="Cancel", command=picker.destroy).pack(side="right")
+
+        populate()
 
     def _add_tooltip(self, widget, text):
         tk = self.tk
@@ -1252,6 +1574,8 @@ class KryptikClicksGUI:
         self.cfg["click_position"] = self.position_var.get()
         self.cfg["sound_enabled"] = bool(self.sound_var.get())
         self.cfg["auto_update_check"] = bool(self.auto_update_var.get())
+        self.cfg["scan_scope"] = self.scan_scope_var.get()
+        self.cfg["scan_window_title"] = self.scan_window_title_var.get()
         save_config(self.cfg)
         self._refresh_status()
         self._refresh_template_label()

@@ -5,6 +5,20 @@ def test_default_config_has_generic_mode_settings(kc):
     assert cfg["click_limit"] == 0
     assert cfg["sound_enabled"] is False
     assert cfg["auto_update_check"] is True
+    assert cfg["scan_scope"] == "all_monitors"
+    assert cfg["scan_window_title"] == ""
+
+
+def test_load_config_rejects_invalid_scan_scope(kc):
+    kc.save_config({"scan_scope": "bogus"})
+    cfg = kc.load_config()
+    assert cfg["scan_scope"] == "all_monitors"
+
+
+def test_load_config_rejects_non_string_scan_window_title(kc):
+    kc.save_config({"scan_window_title": 12345})
+    cfg = kc.load_config()
+    assert cfg["scan_window_title"] == ""
 
 
 def test_load_config_rejects_non_bool_auto_update_check(kc):
