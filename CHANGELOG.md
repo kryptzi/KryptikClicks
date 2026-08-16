@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-08-15
+
+### Changed
+- Default match threshold lowered from 0.85 to 0.50. 0.85 was too strict for
+  most captured triggers in practice and commonly resulted in the app never
+  detecting anything until the user manually lowered it.
+
+### Fixed
+- In Targeted mode with cursor-position clicking, once the trigger was
+  detected it kept re-clicking every cycle for as long as the trigger stayed
+  on screen. This is correct when clicking the fixed target point (the click
+  itself usually makes the trigger go away), but cursor-position mode clicks
+  wherever the mouse already is, not on the trigger — so a trigger that isn't
+  removed by clicking caused runaway spam-clicking. It now clicks once per
+  detection, then waits for the trigger to actually disappear before it's
+  eligible to trigger another click.
+
 ## [1.3.1] - 2026-08-15
 
 ### Fixed
@@ -95,7 +112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.1.0...v1.2.0

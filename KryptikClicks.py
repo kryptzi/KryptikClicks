@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -47,7 +47,7 @@ CONFIG_PATH = os.path.join(SCRIPT_DIR, "kryptikclicks_config.json")
 DEFAULT_CONFIG = {
     "min_delay_ms": 50,
     "max_delay_ms": 150,
-    "match_threshold": 0.85,
+    "match_threshold": 0.50,
     "click_button": "left",
     "click_mode": "targeted",
     "click_position": "fixed",
@@ -504,8 +504,20 @@ class Detector:
 
                 self.log("Trigger detected - clicking...")
                 self._beep()
+                cursor_mode = self.cfg.get("click_position") == "cursor"
                 while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
                     if click_and_check_limit():
+                        break
+                    if cursor_mode:
+                        # Cursor-position mode clicks wherever the mouse already is, not on
+                        # the trigger - so unlike fixed-position mode, clicking doesn't make
+                        # the trigger go away on its own. Wait for it to actually disappear
+                        # before treating a later sighting as a new detection, instead of
+                        # re-clicking every cycle while it just sits there.
+                        while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
+                            time.sleep(SCAN_INTERVAL)
+                            scan_tick()
+                            match = safe_find_match(self._local_region_around(match[0], match[1], monitor))
                         break
                     sleep_between_clicks()
                     scan_tick()
@@ -887,7 +899,8 @@ class KryptikClicksGUI:
             "How closely the screen must match your captured trigger image to fire "
             "clicking (1.0 = pixel-perfect match). Higher = stricter, fewer false triggers but "
             "may miss it if rendering shifts slightly. Lower = more lenient but may misfire on "
-            "similar-looking content. 0.85 is a good default.",
+            "similar-looking content. 0.50 is a good default; raise it if it fires on the "
+            "wrong thing, lower it if it doesn't fire at all.",
         )
 
         button_label = tk.Label(
