@@ -4,6 +4,13 @@ def test_default_config_has_generic_mode_settings(kc):
     assert cfg["click_position"] == "fixed"
     assert cfg["click_limit"] == 0
     assert cfg["sound_enabled"] is False
+    assert cfg["auto_update_check"] is True
+
+
+def test_load_config_rejects_non_bool_auto_update_check(kc):
+    kc.save_config({"auto_update_check": "yes"})
+    cfg = kc.load_config()
+    assert cfg["auto_update_check"] is True
 
 
 def test_load_config_rejects_invalid_click_mode(kc):

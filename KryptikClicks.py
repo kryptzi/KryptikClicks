@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.3.4"
+__version__ = "1.3.5"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -53,6 +53,7 @@ DEFAULT_CONFIG = {
     "click_position": "fixed",
     "click_limit": 0,
     "sound_enabled": False,
+    "auto_update_check": True,
 }
 CLICK_BUTTONS = ["left", "right", "middle"]
 CLICK_MODES = ["targeted", "generic"]
@@ -97,6 +98,8 @@ def load_config():
         cfg["click_limit"] = DEFAULT_CONFIG["click_limit"]
     if not isinstance(cfg.get("sound_enabled"), bool):
         cfg["sound_enabled"] = DEFAULT_CONFIG["sound_enabled"]
+    if not isinstance(cfg.get("auto_update_check"), bool):
+        cfg["auto_update_check"] = DEFAULT_CONFIG["auto_update_check"]
 
     def is_number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -113,6 +116,62 @@ def load_config():
 def save_config(cfg):
     with open(CONFIG_PATH, "w") as f:
         json.dump(cfg, f, indent=2)
+
+
+GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/kryptzi/KryptikClicks/releases/latest"
+
+
+def parse_version(v):
+    """Parses a version string like 'v1.3.4' or '1.3.4' into a comparable tuple."""
+    v = v.strip()
+    if v[:1] in ("v", "V"):
+        v = v[1:]
+    return tuple(int(p) for p in v.split("."))
+
+
+def is_newer_version(remote, local):
+    """True if `remote` version string is strictly newer than `local`."""
+    return parse_version(remote) > parse_version(local)
+
+
+def find_update(release, current_version):
+    """Given a GitHub 'latest release' API response dict, returns
+    {"version", "download_url", "notes"} if it's newer than current_version and has a
+    downloadable .exe asset, else None."""
+    tag = release.get("tag_name")
+    if not tag or not is_newer_version(tag, current_version):
+        return None
+    for asset in release.get("assets", []):
+        name = asset.get("name", "")
+        if name.lower().endswith(".exe"):
+            return {
+                "version": tag,
+                "download_url": asset.get("browser_download_url"),
+                "notes": release.get("body", ""),
+            }
+    return None
+
+
+def fetch_latest_release():
+    """Fetches the latest GitHub release info. Returns the parsed JSON dict, or None on
+    any network/parsing error - being offline or rate-limited shouldn't crash the app."""
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            GITHUB_LATEST_RELEASE_API, headers={"Accept": "application/vnd.github+json"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def check_for_update(current_version, fetcher=fetch_latest_release):
+    release = fetcher()
+    if release is None:
+        return None
+    return find_update(release, current_version)
 
 
 def canvas_point_to_absolute(canvas_x, canvas_y, monitor):
@@ -979,6 +1038,13 @@ class KryptikClicksGUI:
             activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=7)
 
+        self.auto_update_var = tk.BooleanVar(value=self.cfg["auto_update_check"])
+        tk.Checkbutton(
+            settings, text="Check for updates automatically", variable=self.auto_update_var,
+            bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"], activebackground=c["bg"],
+            activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=7)
+
         ttk.Button(
             body, text="Save Settings", style="Accent.TButton", command=self.on_save_settings
         ).pack(fill="x", padx=20, pady=(10, 0))
@@ -1001,11 +1067,27 @@ class KryptikClicksGUI:
             bg=c["bg"], fg=c["muted"], font=(FONT, 8),
         ).pack(anchor="w", padx=20, pady=(0, 4))
 
+        footer = tk.Frame(body, bg=c["bg"])
+        footer.pack(fill="x", padx=20, pady=(0, 16))
+
+        self.update_status_label = tk.Label(
+            footer, text="", bg=c["bg"], fg=c["muted"], font=(FONT, 7),
+        )
+        self.update_status_label.pack(side="left")
+
         tk.Label(
-            body, text=f"v{__version__}", bg=c["bg"], fg=c["muted"], font=(FONT, 7),
-        ).pack(anchor="e", padx=20, pady=(0, 16))
+            footer, text=f"v{__version__}", bg=c["bg"], fg=c["muted"], font=(FONT, 7),
+        ).pack(side="right")
+
+        check_updates_link = tk.Label(
+            footer, text="Check for Updates", bg=c["bg"], fg=c["accent"], font=(FONT, 7, "underline"),
+            cursor="hand2",
+        )
+        check_updates_link.pack(side="right", padx=(0, 10))
+        check_updates_link.bind("<Button-1>", lambda e: self.on_check_updates())
 
         self._on_mode_changed()
+        self._maybe_auto_check_updates()
 
     def _on_mode_changed(self):
         # The click-position choice (fixed point / current cursor) applies to
@@ -1169,10 +1251,47 @@ class KryptikClicksGUI:
         self.cfg["click_mode"] = self.mode_var.get()
         self.cfg["click_position"] = self.position_var.get()
         self.cfg["sound_enabled"] = bool(self.sound_var.get())
+        self.cfg["auto_update_check"] = bool(self.auto_update_var.get())
         save_config(self.cfg)
         self._refresh_status()
         self._refresh_template_label()
         self.log("Settings saved.")
+
+    def _maybe_auto_check_updates(self):
+        if not getattr(sys, "frozen", False) or not self.cfg.get("auto_update_check", True):
+            return
+        self.root.after(1500, lambda: self._run_update_check(silent=True))
+
+    def on_check_updates(self):
+        if not getattr(sys, "frozen", False):
+            self.messagebox.showinfo(
+                "Running from source",
+                "You're running KryptikClicks from source, not the built exe - "
+                "use `git pull` to get the latest changes.",
+            )
+            return
+        self.update_status_label.config(text="Checking for updates...")
+        self._run_update_check(silent=False)
+
+    def _run_update_check(self, silent):
+        def worker():
+            update = check_for_update(__version__)
+            self.root.after(0, lambda: self._on_update_check_done(update, silent))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_check_done(self, update, silent):
+        if update is None:
+            self.update_status_label.config(text="" if silent else "You're up to date.")
+            return
+        self.update_status_label.config(text=f"{update['version']} is available.")
+        if self.messagebox.askyesno(
+            "Update available",
+            f"KryptikClicks {update['version']} is available (you have v{__version__}).\n\n"
+            f"{update['notes']}\n\nOpen the download page in your browser?",
+        ):
+            import webbrowser
+            webbrowser.open(update["download_url"])
 
     def on_quit(self):
         self.detector.stop_event.set()

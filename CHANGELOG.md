@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-08-15
+
+### Added
+- **Update checking.** KryptikClicks now checks GitHub for newer releases -
+  automatically on launch (toggle via "Check for updates automatically" in
+  Settings, on by default) and on demand via the "Check for Updates" link at
+  the bottom of the window. When a newer version is found, it shows what
+  changed and offers to open the download page in your browser. Running from
+  source (not the built exe) shows a reminder to `git pull` instead.
+  - Deliberately does **not** auto-download and self-install: an early version
+    of this feature downloaded the new exe and swapped it in automatically,
+    but Windows Defender's behavior monitoring blocked it outright (a program
+    downloading and replacing its own exe via a hidden helper script looks
+    identical to malware self-updating, regardless of intent). Opening the
+    official GitHub release page for a normal browser download avoids that
+    entirely.
+
 ## [1.3.4] - 2026-08-15
 
 ### Fixed
@@ -139,7 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.4...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.5...HEAD
+[1.3.5]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.1...v1.3.2
