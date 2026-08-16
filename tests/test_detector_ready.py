@@ -63,3 +63,16 @@ def test_targeted_cursor_mode_not_ready_without_template(kc):
     cfg["click_position"] = "cursor"
     d = kc.Detector(cfg, log=lambda m: None)
     assert d.ready is False
+
+
+def test_targeted_color_mode_needs_target_color_not_template(kc):
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["click_position"] = "cursor"
+    cfg["detection_method"] = "color"
+    d = kc.Detector(cfg, log=lambda m: None)
+    assert d.ready is False  # no target color captured yet
+
+    cfg["target_color"] = [118, 52, 171]
+    d2 = kc.Detector(cfg, log=lambda m: None)
+    assert d2.ready is True  # color captured, no template file needed at all

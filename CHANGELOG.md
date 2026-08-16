@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-16
+
+### Added
+- **Color match detection.** A new alternative to image-template matching for
+  Targeted mode: instead of correlating against a captured screenshot, it
+  samples the distinctive (non-background) color from your drag-selected
+  trigger and watches for enough pixels of that color to reappear. Select it
+  under "Detection method" in Settings.
+  - Ignores everything except the target color, so it isn't thrown off by
+    background content changing behind the trigger the way template
+    correlation can be - directly fixes a real case where a captured "Kuri
+    Click" purple-text trigger's template match kept landing in the same
+    0.5-0.6 range as an unrelated settings dropdown, making it impossible to
+    pick a threshold that caught the real trigger without also matching the
+    dropdown.
+  - No new dependency (numpy, already used).
+
 ## [1.4.1] - 2026-08-15
 
 ### Fixed
@@ -185,7 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.5...v1.4.0
 [1.3.5]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.4...v1.3.5

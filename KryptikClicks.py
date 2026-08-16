@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.4.1"
+__version__ = "1.5.0"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -56,11 +56,18 @@ DEFAULT_CONFIG = {
     "auto_update_check": True,
     "scan_scope": "all_monitors",
     "scan_window_title": "",
+    "detection_method": "template",
+    "target_color": None,
+    "color_tolerance": 30,
+    "min_color_pixels": 0,
 }
 CLICK_BUTTONS = ["left", "right", "middle"]
 CLICK_MODES = ["targeted", "generic"]
 CLICK_POSITIONS = ["fixed", "cursor"]
 SCAN_SCOPES = ["all_monitors", "window"]
+DETECTION_METHODS = ["template", "color"]
+COLOR_SATURATION_MIN = 60   # HSV saturation floor for "this pixel is the trigger color, not background"
+COLOR_MATCH_FRACTION = 0.5  # live pixel count only needs to reach this fraction of the captured count
 SCAN_INTERVAL = 0.02      # seconds between screen scans while idle/watching
 TOGGLE_HOTKEY = "f6"
 QUIT_HOTKEY = "f9"
@@ -107,6 +114,19 @@ def load_config():
         cfg["scan_scope"] = DEFAULT_CONFIG["scan_scope"]
     if not isinstance(cfg.get("scan_window_title"), str):
         cfg["scan_window_title"] = DEFAULT_CONFIG["scan_window_title"]
+    if cfg.get("detection_method") not in DETECTION_METHODS:
+        cfg["detection_method"] = DEFAULT_CONFIG["detection_method"]
+    target_color = cfg.get("target_color")
+    if target_color is not None and (
+        not isinstance(target_color, (list, tuple))
+        or len(target_color) != 3
+        or not all(isinstance(v, (int, float)) and 0 <= v <= 255 for v in target_color)
+    ):
+        cfg["target_color"] = DEFAULT_CONFIG["target_color"]
+    if not isinstance(cfg.get("color_tolerance"), (int, float)) or cfg["color_tolerance"] < 0:
+        cfg["color_tolerance"] = DEFAULT_CONFIG["color_tolerance"]
+    if not isinstance(cfg.get("min_color_pixels"), (int, float)) or cfg["min_color_pixels"] < 0:
+        cfg["min_color_pixels"] = DEFAULT_CONFIG["min_color_pixels"]
 
     def is_number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -179,6 +199,35 @@ def check_for_update(current_version, fetcher=fetch_latest_release):
     if release is None:
         return None
     return find_update(release, current_version)
+
+
+def count_color_pixels(rgb_array, target_color, tolerance):
+    """Returns a boolean mask of pixels in `rgb_array` (an HxWx3 array) within
+    `tolerance` (per-channel absolute difference) of target_color."""
+    import numpy as np
+
+    diff = np.abs(rgb_array.astype(np.int16) - np.array(target_color, dtype=np.int16))
+    return np.all(diff <= tolerance, axis=-1)
+
+
+def analyze_color_trigger(crop_img):
+    """Given a PIL image crop of the drag-selected trigger, extracts the
+    dominant non-background (highest-saturation) color and how many pixels in
+    the crop matched it - the reference signal 'color' detection_method looks
+    for during scanning, instead of image template correlation. Falls back to
+    treating the whole crop as the target color if nothing clears the
+    saturation floor (e.g. a solid-color capture)."""
+    import numpy as np
+
+    rgb = np.array(crop_img.convert("RGB"))
+    hsv = np.array(crop_img.convert("HSV"))
+    saturation = hsv[:, :, 1]
+    candidates = rgb[saturation > COLOR_SATURATION_MIN]
+    if len(candidates) == 0:
+        candidates = rgb.reshape(-1, 3)
+    target_color = tuple(int(v) for v in np.median(candidates, axis=0))
+    pixel_count = int(count_color_pixels(rgb, target_color, DEFAULT_CONFIG["color_tolerance"]).sum())
+    return target_color, pixel_count
 
 
 def find_window_by_title(windows, title):
@@ -580,8 +629,13 @@ class Detector:
                 return True  # no capture needed at all
             return self.click_x is not None  # fixed position needs a captured point, not a template
         if cursor_position:
-            return self.template is not None  # trigger still needed, but not a click point
-        return self.template is not None and self.click_x is not None
+            return self._trigger_ready()  # trigger still needed, but not a click point
+        return self._trigger_ready() and self.click_x is not None
+
+    def _trigger_ready(self):
+        if self.cfg.get("detection_method") == "color":
+            return self.cfg.get("target_color") is not None
+        return self.template is not None
 
     def load(self):
         if os.path.exists(TEMPLATE_PATH):
@@ -624,9 +678,15 @@ class Detector:
             pass
 
     def _match_score_in(self, sct, region):
-        """Grabs and matches `region`, returning (x, y, confidence) for the best spot
-        found - regardless of whether it clears match_threshold. Confidence is directly
-        comparable across separate regions/monitors, unlike a plain hit/miss result."""
+        """Grabs and matches `region`, returning (x, y, score) for the best spot
+        found - regardless of whether it clears the configured threshold. Score is
+        directly comparable across separate regions/monitors, unlike a plain
+        hit/miss result. Dispatches to whichever detection_method is configured."""
+        if self.cfg.get("detection_method") == "color":
+            return self._color_match_score_in(sct, region)
+        return self._template_match_score_in(sct, region)
+
+    def _template_match_score_in(self, sct, region):
         shot = sct.grab(region)
         import numpy as np
         frame = np.array(shot)  # BGRA
@@ -637,9 +697,32 @@ class Detector:
         y = region["top"] + max_loc[1] + self.t_h // 2
         return x, y, max_val
 
+    def _color_match_score_in(self, sct, region):
+        """Counts pixels matching the captured target color instead of correlating
+        against a template image - ignores everything except that specific color,
+        so it isn't thrown off by background content changing behind the trigger
+        the way template correlation can be."""
+        shot = sct.grab(region)
+        import numpy as np
+        frame = np.array(shot)  # BGRA
+        rgb = frame[:, :, [2, 1, 0]]
+        mask = count_color_pixels(rgb, self.cfg["target_color"], self.cfg.get("color_tolerance", 30))
+        count = int(mask.sum())
+        if count == 0:
+            return region["left"], region["top"], 0
+        ys, xs = np.nonzero(mask)
+        x = region["left"] + int(xs.mean())
+        y = region["top"] + int(ys.mean())
+        return x, y, count
+
+    def _score_threshold(self):
+        if self.cfg.get("detection_method") == "color":
+            return self.cfg.get("min_color_pixels", DEFAULT_CONFIG["min_color_pixels"])
+        return self.cfg.get("match_threshold", DEFAULT_CONFIG["match_threshold"])
+
     def _find_match_in(self, sct, region):
-        x, y, max_val = self._match_score_in(sct, region)
-        if max_val >= self.cfg["match_threshold"]:
+        x, y, score = self._match_score_in(sct, region)
+        if score >= self._score_threshold():
             return x, y
         return None
 
@@ -756,7 +839,7 @@ class Detector:
                 if result is None:
                     continue
                 x, y, max_val = result
-                if max_val >= self.cfg["match_threshold"] and (best is None or max_val > best[0]):
+                if max_val >= self._score_threshold() and (best is None or max_val > best[0]):
                     best = (max_val, x, y, r)
             if best is None:
                 return None, None
@@ -1158,6 +1241,22 @@ class KryptikClicksGUI:
             value="cursor", command=self._refresh_template_label, **radio_kwargs,
         ).pack(anchor="w")
 
+        self.detection_frame = tk.Frame(body, bg=c["bg"])
+        self.detection_frame.pack(fill="x", padx=20)
+        self.detection_method_var = tk.StringVar(value=self.cfg["detection_method"])
+        tk.Label(
+            self.detection_frame, text="Detection method:", bg=c["bg"], fg=c["muted"], font=(FONT, 8)
+        ).pack(anchor="w", pady=(6, 2))
+        tk.Radiobutton(
+            self.detection_frame, text="Image template match", variable=self.detection_method_var,
+            value="template", command=self._on_detection_method_changed, **radio_kwargs,
+        ).pack(anchor="w")
+        tk.Radiobutton(
+            self.detection_frame, text="Color match (e.g. distinctly colored text)",
+            variable=self.detection_method_var, value="color",
+            command=self._on_detection_method_changed, **radio_kwargs,
+        ).pack(anchor="w")
+
         self.scan_scope_frame = tk.Frame(body, bg=c["bg"])
         self.scan_scope_frame.pack(fill="x", padx=20)
         self.scan_scope_var = tk.StringVar(value=self.cfg["scan_scope"])
@@ -1225,9 +1324,9 @@ class KryptikClicksGUI:
             )
             label.grid(row=r, column=0, sticky="w", pady=7)
             self._add_tooltip(label, tooltip_text)
-            ttk.Entry(settings, textvariable=var, width=8, style="Field.TEntry", justify="right").grid(
-                row=r, column=1, pady=7, sticky="e"
-            )
+            entry = ttk.Entry(settings, textvariable=var, width=8, style="Field.TEntry", justify="right")
+            entry.grid(row=r, column=1, pady=7, sticky="e")
+            return label, entry
 
         self.min_var = tk.StringVar(value=str(self.cfg["min_delay_ms"]))
         self.max_var = tk.StringVar(value=str(self.cfg["max_delay_ms"]))
@@ -1242,13 +1341,14 @@ class KryptikClicksGUI:
             "Longest random pause between clicks while it's actively clicking. "
             "Must be >= Min delay.",
         )
-        settings_row(
+        self.thr_row_widgets = settings_row(
             "Match threshold (0-1)", self.thr_var, 2,
             "How closely the screen must match your captured trigger image to fire "
             "clicking (1.0 = pixel-perfect match). Higher = stricter, fewer false triggers but "
             "may miss it if rendering shifts slightly. Lower = more lenient but may misfire on "
             "similar-looking content. 0.50 is a good default; raise it if it fires on the "
-            "wrong thing, lower it if it doesn't fire at all.",
+            "wrong thing, lower it if it doesn't fire at all. Only used by Image template match - "
+            "Color match uses the color/pixel-count captured with the trigger instead.",
         )
 
         button_label = tk.Label(
@@ -1327,12 +1427,24 @@ class KryptikClicksGUI:
 
         self._on_mode_changed()
         self._on_scan_scope_changed()
+        self._on_detection_method_changed()
         self._maybe_auto_check_updates()
 
     def _on_mode_changed(self):
         # The click-position choice (fixed point / current cursor) applies to
         # both modes, so it's always shown - only the trigger-capture
         # requirement (Targeted needs a template; Generic doesn't) differs.
+        self._refresh_template_label()
+
+    def _on_detection_method_changed(self):
+        # Match threshold only means anything for image template matching -
+        # color match uses the pixel count captured with the trigger instead.
+        show_threshold = self.detection_method_var.get() != "color"
+        for widget in self.thr_row_widgets:
+            if show_threshold:
+                widget.grid()
+            else:
+                widget.grid_remove()
         self._refresh_template_label()
 
     def _on_scan_scope_changed(self):
@@ -1466,42 +1578,50 @@ class KryptikClicksGUI:
         widget.bind("<Leave>", hide)
 
     def _refresh_template_label(self):
-        # Reflects the mode/position currently selected in the form (which may not be
-        # saved yet) - same "preview before Save" behavior as the other settings fields.
+        # Reflects the mode/position/detection-method currently selected in the form
+        # (which may not be saved yet) - same "preview before Save" behavior as the
+        # other settings fields.
         mode = self.mode_var.get()
         cursor_position = self.position_var.get() == "cursor"
+        color_mode = self.detection_method_var.get() == "color"
         needs_template = mode == "targeted"
         needs_point = not cursor_position
 
-        capture_label = "Capture Template..." if needs_template and not needs_point else "Capture Template + Click Target..."
-        recapture_label = "Recapture Template..." if needs_template and not needs_point else "Recapture Template + Click Target..."
+        capture_label = "Capture Trigger..." if needs_template and not needs_point else "Capture Trigger + Click Target..."
+        recapture_label = "Recapture Trigger..." if needs_template and not needs_point else "Recapture Trigger + Click Target..."
 
         if not needs_template and not needs_point:
             self.template_var.set("Cursor mode selected - no capture needed. It'll click wherever your mouse is.")
             self.capture_var.set(capture_label)
             return
 
-        have_template = self.detector.template is not None
+        have_trigger = (
+            self.cfg.get("target_color") is not None if color_mode else self.detector.template is not None
+        )
         have_point = self.detector.click_x is not None
-        ready_for_mode = (not needs_template or have_template) and (not needs_point or have_point)
+        ready_for_mode = (not needs_template or have_trigger) and (not needs_point or have_point)
 
         if ready_for_mode:
+            if color_mode:
+                trigger_desc = f"color RGB{tuple(self.cfg['target_color'])}"
+            else:
+                trigger_desc = f"{self.detector.t_w}x{self.detector.t_h}px template"
             if not needs_point:
                 self.template_var.set(
-                    f"Using saved trigger: {self.detector.t_w}x{self.detector.t_h}px. "
+                    f"Using saved trigger: {trigger_desc}. "
                     f"Clicks wherever your mouse is when it's detected."
                 )
             elif not needs_template:
                 self.template_var.set(f"Using saved click point ({self.detector.click_x}, {self.detector.click_y}).")
             else:
                 self.template_var.set(
-                    f"Using saved capture: {self.detector.t_w}x{self.detector.t_h}px template, "
+                    f"Using saved capture: {trigger_desc}, "
                     f"click target ({self.detector.click_x}, {self.detector.click_y}). "
                     f"Reused automatically — recapture only if it stops matching."
                 )
             self.capture_var.set(recapture_label)
         else:
-            self.template_var.set("No template captured yet - click below to set it up (one-time).")
+            self.template_var.set("No trigger captured yet - click below to set it up (one-time).")
             self.capture_var.set(capture_label)
 
     def _refresh_status(self):
@@ -1541,6 +1661,7 @@ class KryptikClicksGUI:
         # a separate "Save Settings" click first.
         self.cfg["click_mode"] = self.mode_var.get()
         self.cfg["click_position"] = self.position_var.get()
+        self.cfg["detection_method"] = self.detection_method_var.get()
         save_config(self.cfg)
         require_point = self.position_var.get() != "cursor"
         self.root.withdraw()
@@ -1552,12 +1673,20 @@ class KryptikClicksGUI:
             self.log("Capture cancelled.")
         else:
             save_capture(box, point, full_img)
+            if self.cfg["detection_method"] == "color":
+                target_color, pixel_count = analyze_color_trigger(full_img.crop(box))
+                self.cfg["target_color"] = list(target_color)
+                self.cfg["min_color_pixels"] = max(1, int(pixel_count * COLOR_MATCH_FRACTION))
+                save_config(self.cfg)
+                trigger_desc = f"color RGB{target_color}"
+            else:
+                trigger_desc = "template"
             self.detector.load()
             self._refresh_template_label()
             if point is not None:
-                self.log(f"Captured new template + click target {point}.")
+                self.log(f"Captured new {trigger_desc} trigger + click target {point}.")
             else:
-                self.log("Captured new template.")
+                self.log(f"Captured new {trigger_desc} trigger.")
         if was_scanning and self.detector.ready:
             self.detector.start_scanning()
         self._refresh_status()
@@ -1588,6 +1717,7 @@ class KryptikClicksGUI:
         self.cfg["click_button"] = self.button_var.get()
         self.cfg["click_mode"] = self.mode_var.get()
         self.cfg["click_position"] = self.position_var.get()
+        self.cfg["detection_method"] = self.detection_method_var.get()
         self.cfg["sound_enabled"] = bool(self.sound_var.get())
         self.cfg["auto_update_check"] = bool(self.auto_update_var.get())
         self.cfg["scan_scope"] = self.scan_scope_var.get()

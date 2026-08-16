@@ -75,6 +75,41 @@ def test_targeted_mode_only_clicks_while_a_match_is_found_and_stops_at_limit(kc,
     assert d.scanning_active.is_set() is False
 
 
+def test_targeted_color_mode_uses_min_color_pixels_not_match_threshold(kc, monkeypatch):
+    # detection_method="color" must compare scores against min_color_pixels (a
+    # pixel count), not match_threshold (a 0-1 correlation score) - proves the
+    # dispatch in _match_score_in/_score_threshold actually routes correctly,
+    # by leaving _match_score_in itself unpatched and only stubbing the
+    # lower-level _color_match_score_in it should be calling into.
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["click_position"] = "cursor"
+    cfg["detection_method"] = "color"
+    cfg["target_color"] = [118, 52, 171]
+    cfg["min_color_pixels"] = 50
+    cfg["match_threshold"] = 0.99  # deliberately unreachable if ever misused as the comparison
+    cfg["click_limit"] = 2
+    cfg["min_delay_ms"] = 0
+    cfg["max_delay_ms"] = 1
+
+    d = kc.Detector(cfg, log=lambda m: None)
+
+    # 80 clears min_color_pixels (50) but would never clear match_threshold (0.99)
+    # if the dispatch were broken and compared it as a correlation score instead.
+    monkeypatch.setattr(kc.Detector, "_color_match_score_in", lambda self, sct, region: (5, 5, 80))
+
+    calls = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(pyautogui, "position", lambda: (5, 5))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    assert len(calls) == 2
+    assert d.total_clicks == 2
+
+
 def test_targeted_mode_does_not_click_when_nothing_matches(kc, monkeypatch):
     from PIL import Image
 

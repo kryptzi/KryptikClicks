@@ -7,6 +7,48 @@ def test_default_config_has_generic_mode_settings(kc):
     assert cfg["auto_update_check"] is True
     assert cfg["scan_scope"] == "all_monitors"
     assert cfg["scan_window_title"] == ""
+    assert cfg["detection_method"] == "template"
+    assert cfg["target_color"] is None
+    assert cfg["color_tolerance"] == 30
+    assert cfg["min_color_pixels"] == 0
+
+
+def test_load_config_rejects_invalid_detection_method(kc):
+    kc.save_config({"detection_method": "bogus"})
+    cfg = kc.load_config()
+    assert cfg["detection_method"] == "template"
+
+
+def test_load_config_rejects_malformed_target_color(kc):
+    kc.save_config({"target_color": [1, 2]})
+    cfg = kc.load_config()
+    assert cfg["target_color"] is None
+
+    kc.save_config({"target_color": [1, 2, 300]})
+    cfg = kc.load_config()
+    assert cfg["target_color"] is None
+
+    kc.save_config({"target_color": "purple"})
+    cfg = kc.load_config()
+    assert cfg["target_color"] is None
+
+
+def test_load_config_accepts_valid_target_color(kc):
+    kc.save_config({"target_color": [118, 52, 171]})
+    cfg = kc.load_config()
+    assert cfg["target_color"] == [118, 52, 171]
+
+
+def test_load_config_rejects_negative_color_tolerance(kc):
+    kc.save_config({"color_tolerance": -5})
+    cfg = kc.load_config()
+    assert cfg["color_tolerance"] == 30
+
+
+def test_load_config_rejects_negative_min_color_pixels(kc):
+    kc.save_config({"min_color_pixels": -1})
+    cfg = kc.load_config()
+    assert cfg["min_color_pixels"] == 0
 
 
 def test_load_config_rejects_invalid_scan_scope(kc):
