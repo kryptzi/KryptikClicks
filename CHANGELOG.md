@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-08-17
+
+### Changed
+- **Accent color changed again, this time to a deep purple sampled from the
+  Kuri brand logo (`#A90BBE`)**, replacing the bronze/copper introduced in
+  v1.6.0. The bronze/copper didn't land well in practice; purple was the
+  preferred direction all along, just not the leftover Discord-blurple
+  (`#5865f2`) that was in place before v1.6.0.
+
 ## [1.6.0] - 2026-08-17
 
 ### Added

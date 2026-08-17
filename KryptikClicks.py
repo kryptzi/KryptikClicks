@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1104,8 +1104,8 @@ class KryptikClicksGUI:
         "text": "#f2f3f5",
         "muted": "#80848e",
         "muted_dark": "#b5bac1",
-        "accent": "#B77B62",
-        "accent_dark": "#7C4939",
+        "accent": "#A90BBE",
+        "accent_dark": "#6E077C",
         "green": "#23a55a",
         "green_dark": "#1a8045",
         "amber": "#f0b232",
