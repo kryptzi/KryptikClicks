@@ -11,6 +11,27 @@ def test_default_config_has_generic_mode_settings(kc):
     assert cfg["target_color"] is None
     assert cfg["color_tolerance"] == 30
     assert cfg["min_color_pixels"] == 0
+    assert cfg["scan_region"] is None
+
+
+def test_load_config_accepts_valid_scan_region(kc):
+    kc.save_config({"scan_region": {"left": 10, "top": 20, "width": 300, "height": 400}})
+    cfg = kc.load_config()
+    assert cfg["scan_region"] == {"left": 10, "top": 20, "width": 300, "height": 400}
+
+
+def test_load_config_rejects_malformed_scan_region(kc):
+    kc.save_config({"scan_region": {"left": 10, "top": 20}})  # missing width/height
+    cfg = kc.load_config()
+    assert cfg["scan_region"] is None
+
+    kc.save_config({"scan_region": {"left": 10, "top": 20, "width": 0, "height": 400}})
+    cfg = kc.load_config()
+    assert cfg["scan_region"] is None
+
+    kc.save_config({"scan_region": "nope"})
+    cfg = kc.load_config()
+    assert cfg["scan_region"] is None
 
 
 def test_load_config_rejects_invalid_detection_method(kc):

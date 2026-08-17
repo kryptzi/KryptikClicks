@@ -75,6 +75,53 @@ def test_targeted_mode_only_clicks_while_a_match_is_found_and_stops_at_limit(kc,
     assert d.scanning_active.is_set() is False
 
 
+def test_targeted_fixed_mode_caps_burst_clicks_before_forcing_a_fresh_scan(kc, monkeypatch):
+    # Continuous fixed-position clicking is intentional while a trigger is
+    # genuinely visible, but a bad/overly-broad capture (or a trigger that
+    # stays "matched" for a long real stretch) shouldn't be able to produce
+    # thousands of unbounded clicks off one stale local-region check. After a
+    # bounded burst it must force a fresh full-region scan (real case:
+    # a mis-captured near-black color matched almost an entire window
+    # continuously, producing ~1800 clicks in one session).
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+    with open(kc.TARGET_PATH, "w") as f:
+        f.write("5,5")
+
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["click_limit"] = 12
+    cfg["min_delay_ms"] = 0
+    cfg["max_delay_ms"] = 1
+
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "MAX_CLICKS_PER_BURST", 5)
+
+    detect_log_count = [0]
+
+    def fake_log(msg):
+        if msg.startswith("Trigger detected"):
+            detect_log_count[0] += 1
+
+    d.log = fake_log
+
+    # Simulate the trigger being permanently visible - if bursts weren't
+    # capped, this would be one uninterrupted click stream up to click_limit.
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
+
+    calls = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: calls.append(a))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    assert len(calls) == 12
+    # 12 clicks capped at 5 per burst means at least 3 separate detection bursts.
+    assert detect_log_count[0] >= 3
+
+
 def test_targeted_color_mode_uses_min_color_pixels_not_match_threshold(kc, monkeypatch):
     # detection_method="color" must compare scores against min_color_pixels (a
     # pixel count), not match_threshold (a 0-1 correlation score) - proves the

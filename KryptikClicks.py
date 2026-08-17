@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -60,6 +60,7 @@ DEFAULT_CONFIG = {
     "target_color": None,
     "color_tolerance": 30,
     "min_color_pixels": 0,
+    "scan_region": None,
 }
 CLICK_BUTTONS = ["left", "right", "middle"]
 CLICK_MODES = ["targeted", "generic"]
@@ -67,6 +68,8 @@ CLICK_POSITIONS = ["fixed", "cursor"]
 SCAN_SCOPES = ["all_monitors", "window"]
 DETECTION_METHODS = ["template", "color"]
 COLOR_SATURATION_MIN = 60   # HSV saturation floor for "this pixel is the trigger color, not background"
+COLOR_VALUE_MIN = 80        # HSV value(brightness) floor - a dark pixel can have a deceptively high
+                             # saturation *ratio* purely from being dark, without looking "colorful" at all
 COLOR_MATCH_FRACTION = 0.5  # live pixel count only needs to reach this fraction of the captured count
 SCAN_INTERVAL = 0.02      # seconds between screen scans while idle/watching
 TOGGLE_HOTKEY = "f6"
@@ -127,6 +130,15 @@ def load_config():
         cfg["color_tolerance"] = DEFAULT_CONFIG["color_tolerance"]
     if not isinstance(cfg.get("min_color_pixels"), (int, float)) or cfg["min_color_pixels"] < 0:
         cfg["min_color_pixels"] = DEFAULT_CONFIG["min_color_pixels"]
+    scan_region = cfg.get("scan_region")
+    if scan_region is not None and (
+        not isinstance(scan_region, dict)
+        or set(scan_region.keys()) != {"left", "top", "width", "height"}
+        or not all(isinstance(v, (int, float)) for v in scan_region.values())
+        or scan_region["width"] <= 0
+        or scan_region["height"] <= 0
+    ):
+        cfg["scan_region"] = DEFAULT_CONFIG["scan_region"]
 
     def is_number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool)
@@ -212,22 +224,56 @@ def count_color_pixels(rgb_array, target_color, tolerance):
 
 def analyze_color_trigger(crop_img):
     """Given a PIL image crop of the drag-selected trigger, extracts the
-    dominant non-background (highest-saturation) color and how many pixels in
-    the crop matched it - the reference signal 'color' detection_method looks
-    for during scanning, instead of image template correlation. Falls back to
-    treating the whole crop as the target color if nothing clears the
-    saturation floor (e.g. a solid-color capture)."""
+    dominant non-background (distinctly colored, not-too-dark) color and how
+    many pixels in the crop matched it - the reference signal 'color'
+    detection_method looks for during scanning, instead of image template
+    correlation. Falls back to treating the whole crop as the target color if
+    nothing clears the saturation/brightness floor (e.g. a solid-color
+    capture)."""
     import numpy as np
 
     rgb = np.array(crop_img.convert("RGB"))
     hsv = np.array(crop_img.convert("HSV"))
     saturation = hsv[:, :, 1]
-    candidates = rgb[saturation > COLOR_SATURATION_MIN]
+    value = hsv[:, :, 2]
+    # Saturation alone isn't enough: a near-black pixel can have a high
+    # saturation *ratio* purely from being dark, without looking distinctive at
+    # all - requiring real brightness too keeps dark background out.
+    candidates = rgb[(saturation > COLOR_SATURATION_MIN) & (value > COLOR_VALUE_MIN)]
     if len(candidates) == 0:
         candidates = rgb.reshape(-1, 3)
     target_color = tuple(int(v) for v in np.median(candidates, axis=0))
     pixel_count = int(count_color_pixels(rgb, target_color, DEFAULT_CONFIG["color_tolerance"]).sum())
     return target_color, pixel_count
+
+
+def compute_scan_region_offset(box_abs, window_rect):
+    """Given an absolute-screen box (left, top, right, bottom) and the target
+    window's current absolute rect, returns the box as an offset relative to
+    the window's own top-left corner - so it can be reapplied against the
+    window's current position on each scan tick even if the window has moved
+    since this was captured."""
+    left, top, right, bottom = box_abs
+    return {
+        "left": left - window_rect["left"],
+        "top": top - window_rect["top"],
+        "width": right - left,
+        "height": bottom - top,
+    }
+
+
+def apply_scan_region_offset(window_rect, scan_region):
+    """Re-anchors a captured scan_region offset onto the window's current
+    absolute position. Returns window_rect unchanged if scan_region is None
+    (meaning "scan the whole window")."""
+    if not scan_region:
+        return window_rect
+    return {
+        "left": window_rect["left"] + scan_region["left"],
+        "top": window_rect["top"] + scan_region["top"],
+        "width": scan_region["width"],
+        "height": scan_region["height"],
+    }
 
 
 def find_window_by_title(windows, title):
@@ -386,11 +432,13 @@ def canvas_point_to_absolute(canvas_x, canvas_y, monitor):
     return (canvas_x + monitor["left"], canvas_y + monitor["top"])
 
 
-def run_capture_ui(parent=None, require_click_point=True):
+def run_capture_ui(parent=None, require_click_point=True, label_text=None):
     """Shows the capture overlay: drag-select the trigger image, then
     (if require_click_point) click the spot to auto-click. Pass require_click_point=False
     to skip that second step - used when the click position will be the live cursor
-    position instead of a captured point.
+    position instead of a captured point. Pass label_text to override the default
+    step-1 instructions (e.g. reusing this same drag-select flow for defining a
+    scan region instead of a trigger).
 
     On multi-monitor setups this shows one overlay window per physical monitor
     (each sized to just that monitor) rather than one giant window spanning
@@ -417,7 +465,7 @@ def run_capture_ui(parent=None, require_click_point=True):
     controller = tk.Tk() if standalone else tk.Toplevel(parent)
     controller.withdraw()  # invisible; just coordinates the per-monitor windows and blocks until done
 
-    step1_text = (
+    step1_text = label_text or (
         "Step 1/2: Drag a tight box around the trigger you want it to watch for, then release. Esc to cancel."
         if require_click_point else
         "Drag a tight box around the trigger you want it to watch for, then release. Esc to cancel."
@@ -592,6 +640,14 @@ class Detector:
     # a very long time (observed: 36+ seconds during actual gameplay).
     CURSOR_MODE_MAX_WAIT_SECONDS = 2.0
 
+    # In fixed-position mode, the most consecutive clicks a single detection
+    # will fire before forcing a fresh full-region scan, even if the local
+    # region around the last click still reads as a match. Continuous
+    # clicking while a trigger is genuinely visible is intentional, but this
+    # caps how far a stale or overly-broad match (e.g. a bad color capture
+    # that matches most of the window) can run before being re-verified.
+    MAX_CLICKS_PER_BURST = 5
+
     def __init__(self, cfg, log=print):
         import cv2
         import mss
@@ -748,7 +804,9 @@ class Detector:
             return [], None, "not_found"
         if is_window_minimized(hwnd):
             return [], hwnd, "minimized"
-        return [get_window_rect(hwnd)], hwnd, "ok"
+        window_rect = get_window_rect(hwnd)
+        region = apply_scan_region_offset(window_rect, self.cfg.get("scan_region"))
+        return [region], hwnd, "ok"
 
     def _local_region_around(self, x, y, monitor):
         pad = 60
@@ -898,9 +956,11 @@ class Detector:
                 self.log("Trigger detected - clicking...")
                 self._beep()
                 cursor_mode = self.cfg.get("click_position") == "cursor"
+                burst_clicks = 0
                 while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
                     if click_and_check_limit():
                         break
+                    burst_clicks += 1
                     if cursor_mode:
                         # Cursor-position mode clicks wherever the mouse already is, not on
                         # the trigger - so unlike fixed-position mode, clicking doesn't make
@@ -921,6 +981,8 @@ class Detector:
                         if timed_out:
                             continue  # still (probably) there - click again rather than wait longer
                         break
+                    if burst_clicks >= self.MAX_CLICKS_PER_BURST:
+                        break  # force a fresh full-region scan instead of trusting a stale local match
                     sleep_between_clicks()
                     scan_tick()
                     match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
@@ -1285,6 +1347,22 @@ class KryptikClicksGUI:
             self.scan_window_row, text="Choose Window...", command=self.on_choose_window,
         ).pack(side="right")
 
+        self.scan_region_display_var = tk.StringVar(value=self._scan_region_display_text())
+        self.scan_region_row = tk.Frame(self.scan_scope_frame, bg=c["bg"])
+        tk.Label(
+            self.scan_region_row, textvariable=self.scan_region_display_var, bg=c["bg"],
+            fg=c["muted"], font=(FONT, 9), wraplength=200, justify="left",
+        ).pack(side="left")
+        ttk.Button(
+            self.scan_region_row, text="Limit to Region...", command=self.on_define_scan_region,
+        ).pack(side="right")
+        clear_region_link = tk.Label(
+            self.scan_region_row, text="Clear", bg=c["bg"], fg=c["accent"], font=(FONT, 8, "underline"),
+            cursor="hand2",
+        )
+        clear_region_link.pack(side="right", padx=(0, 8))
+        clear_region_link.bind("<Button-1>", lambda e: self.on_clear_scan_region())
+
         self.template_var = tk.StringVar(value="No template captured yet.")
         self.template_label = tk.Label(
             body, textvariable=self.template_var, bg=c["bg"], fg=c["muted"],
@@ -1450,8 +1528,10 @@ class KryptikClicksGUI:
     def _on_scan_scope_changed(self):
         if self.scan_scope_var.get() == "window":
             self.scan_window_row.pack(fill="x", pady=(4, 0))
+            self.scan_region_row.pack(fill="x", pady=(4, 0))
         else:
             self.scan_window_row.pack_forget()
+            self.scan_region_row.pack_forget()
 
     def _scan_window_display_text(self, title):
         if not title:
@@ -1463,6 +1543,57 @@ class KryptikClicksGUI:
         if title in open_titles:
             return f'Target: "{title}"'
         return f'Target: "{title}" (not currently open)'
+
+    def _scan_region_display_text(self):
+        sr = self.cfg.get("scan_region")
+        if not sr:
+            return "Scanning the whole window."
+        return f"Scan region: {sr['width']}x{sr['height']}px within the window."
+
+    def on_define_scan_region(self):
+        title = self.scan_window_title_var.get()
+        if not title:
+            self.messagebox.showwarning("No window selected", "Choose a window first.")
+            return
+        hwnd = find_window_by_title(list_visible_windows(), title)
+        if hwnd is None:
+            self.messagebox.showwarning(
+                "Window not found", f'"{title}" isn\'t currently open - open it, then try again.'
+            )
+            return
+        window_rect = get_window_rect(hwnd)
+
+        self.root.withdraw()
+        try:
+            box, _, full_img = run_capture_ui(
+                parent=self.root, require_click_point=False,
+                label_text="Drag a box around the area to scan (e.g. just the game viewport, "
+                            "excluding sidebars/menus). Esc to cancel.",
+            )
+        finally:
+            self.root.deiconify()
+        if box is None:
+            self.log("Scan region selection cancelled.")
+            return
+
+        import mss
+        with mss.mss() as sct:
+            virtual = sct.monitors[0]
+        box_abs = (
+            box[0] + virtual["left"], box[1] + virtual["top"],
+            box[2] + virtual["left"], box[3] + virtual["top"],
+        )
+        self.cfg["scan_region"] = compute_scan_region_offset(box_abs, window_rect)
+        save_config(self.cfg)
+        self.scan_region_display_var.set(self._scan_region_display_text())
+        sr = self.cfg["scan_region"]
+        self.log(f"Scan region set: {sr['width']}x{sr['height']}px within the tracked window.")
+
+    def on_clear_scan_region(self):
+        self.cfg["scan_region"] = None
+        save_config(self.cfg)
+        self.scan_region_display_var.set(self._scan_region_display_text())
+        self.log("Scan region cleared - scanning the whole window again.")
 
     def on_choose_window(self):
         import ctypes

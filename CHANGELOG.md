@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-08-17
+
+### Added
+- **Scan region.** When scanning a specific window, you can now further limit
+  scanning to a sub-area of it via "Limit to Region..." (with a "Clear" link
+  to go back to the whole window) - e.g. just the game viewport, excluding a
+  sidebar or other persistent UI. Tracks the window's position live, so it
+  keeps working correctly if the window moves.
+
+### Fixed
+- **Color capture could pick background instead of the trigger.** HSV
+  saturation alone doesn't reliably separate foreground from background - a
+  near-black pixel can have a deceptively high saturation *ratio* purely from
+  being dark, without looking distinctive at all. This could make a captured
+  trigger resolve to a near-black color that then matched almost an entire
+  dark-themed window continuously. Capture now also requires a minimum
+  brightness, not just saturation.
+- **Critical: fixed-position mode could produce runaway click counts.**
+  Continuous clicking while a trigger is genuinely visible is intentional,
+  but there was no upper bound - combined with the false-match issue above,
+  one real session produced roughly 1800 clicks. It now caps at 5 consecutive
+  clicks per detection before forcing a fresh full-region re-scan, matching
+  the detect → click a few times → re-verify pattern that's actually wanted.
+
 ## [1.5.0] - 2026-08-16
 
 ### Added
@@ -202,7 +226,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.3.5...v1.4.0

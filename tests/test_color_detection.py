@@ -39,3 +39,21 @@ def test_analyze_color_trigger_falls_back_to_whole_image_when_nothing_saturated(
     target_color, pixel_count = kc.analyze_color_trigger(img)
     assert target_color == (128, 128, 128)
     assert pixel_count == 9
+
+
+def test_analyze_color_trigger_ignores_dark_pixels_with_deceptively_high_saturation_ratio(kc):
+    # Real bug: a near-black background pixel like (20, 22, 34) has a HIGH
+    # saturation *ratio* ((max-min)/max) purely because it's dark, even though
+    # it's visually indistinguishable from black/background to a human - not
+    # a real "distinctive foreground color" the way bright purple text is.
+    # Saturation alone can't tell them apart; a minimum brightness floor can.
+    # This previously caused a captured trigger to resolve to near-black and
+    # then match almost the entire (dark-themed) window as "the trigger".
+    img = Image.new("RGB", (6, 6), (20, 22, 34))
+    for x, y in [(2, 2), (3, 2), (2, 3), (3, 3)]:
+        img.putpixel((x, y), (127, 60, 179))
+
+    target_color, pixel_count = kc.analyze_color_trigger(img)
+
+    assert target_color == (127, 60, 179)
+    assert pixel_count == 4
