@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-08-17
+
+### Fixed
+- **Taskbar icon showed the plain Python logo instead of the app's icon when
+  run from source** (`python KryptikClicks.py`, e.g. via a desktop shortcut).
+  Windows groups/identifies taskbar buttons by the *hosting* process unless
+  that process claims its own identity - running from source, the host is
+  python.exe/pythonw.exe, so without an explicit App User Model ID the
+  taskbar fell back to showing python.exe's own icon. The window's own title
+  bar icon was unaffected (that's set directly, not by process identity) and
+  looked correct the whole time, which made this confusing to spot. Now sets
+  a distinct App User Model ID before the window is created, same fix used
+  for this in other Tkinter apps.
+- `assets/icon.ico` itself was also malformed independently of the above: every
+  embedded resolution was non-square (e.g. "256x256" was actually 256x215),
+  inherited from a source master image that wasn't square either. This is
+  invalid for a Windows icon and rendered as a garbled/unrecognizable image
+  in at least one shell context observed while investigating the taskbar
+  issue above. Rebuilt `icon.ico` from a properly centered, square, still
+  fully transparent canvas at the standard sizes (16/24/32/48/64/128/256).
+  Unrelated to the transparent-background fix in v1.3.0 - that background was
+  already fine here; this was a dimensions problem.
+- The `iconbitmap()` call that sets the window icon silently swallowed any
+  failure (`except Exception: pass`), so if it ever broke again there'd be no
+  way to tell without a developer attaching a debugger. It now logs a warning
+  to the Activity panel instead.
+- **Picking a new scan target didn't actually take effect until Save Settings
+  was clicked.** Choosing "All monitors"/"Specific window", or picking a
+  window from "Choose Window...", updated the displayed selection immediately
+  (looking exactly like a completed capture, which *does* take effect right
+  away) but silently left the running scanner on the old scope/window until a
+  separate Save Settings click. Both now commit immediately, matching the
+  capture flow's existing behavior.
+
 ## [1.5.1] - 2026-08-17
 
 ### Added
@@ -226,7 +260,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.3...HEAD
+[1.5.3]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.1...v1.5.3
 [1.5.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.0...v1.4.1

@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.5.1"
+__version__ = "1.5.3"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1101,6 +1101,22 @@ class KryptikClicksGUI:
         self.cfg = load_config()
         self.detector = Detector(self.cfg, log=self.log)
 
+        # Windows groups/identifies taskbar buttons by the *hosting* process
+        # unless the process claims its own identity. Run from source, that
+        # host is python.exe/pythonw.exe - so without this, Windows can show
+        # python.exe's own icon on the taskbar button instead of the icon we
+        # set on the window below, even though the window's own title bar
+        # (unaffected by this) shows ours correctly. Must be set before the
+        # first window is created. No-op effect if it fails - not required
+        # for the window itself to work, just for taskbar icon/grouping.
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Kryptzi.KryptikClicks")
+            except Exception:
+                pass  # cosmetic only - fine to fall back to default taskbar grouping
+
         self.root = tk.Tk()
         self.root.title("KryptikClicks")
         self.root.configure(bg=self.COLORS["bg"])
@@ -1110,8 +1126,11 @@ class KryptikClicksGUI:
         self._enable_dark_titlebar(self.root)
         try:
             self.root.iconbitmap(resource_path("assets", "icon.ico"))
-        except Exception:
-            pass  # cosmetic only - fine to fall back to the default icon
+        except Exception as e:
+            # Cosmetic only - fine to fall back to the default icon, but silently
+            # swallowing this meant a broken icon.ico could go unnoticed indefinitely
+            # (this has happened before - see CHANGELOG v1.3.0). Surface it instead.
+            self.log(f"Warning: couldn't load window icon ({e}).")
 
         self._style = ttk.Style(self.root)
         try:
@@ -1526,6 +1545,12 @@ class KryptikClicksGUI:
         self._refresh_template_label()
 
     def _on_scan_scope_changed(self):
+        # Commit immediately (like on_capture already does for click_mode/click_position/
+        # detection_method) rather than waiting for a separate Save Settings click - the
+        # UI otherwise looks live (the visible row toggles right away) while scanning
+        # would silently keep using the old scope until Save Settings was pressed.
+        self.cfg["scan_scope"] = self.scan_scope_var.get()
+        save_config(self.cfg)
         if self.scan_scope_var.get() == "window":
             self.scan_window_row.pack(fill="x", pady=(4, 0))
             self.scan_region_row.pack(fill="x", pady=(4, 0))
@@ -1626,6 +1651,11 @@ class KryptikClicksGUI:
         def select(title):
             self.scan_window_title_var.set(title)
             self.scan_window_display_var.set(self._scan_window_display_text(title))
+            # Commit immediately (see _on_scan_scope_changed) - the display updates right
+            # away just like a completed capture does, so this must actually take effect
+            # right away too, not silently wait for a separate Save Settings click.
+            self.cfg["scan_window_title"] = title
+            save_config(self.cfg)
             picker.destroy()
 
         def populate():
