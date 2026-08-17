@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-17
+
+### Added
+- **Simple/Advanced tabs.** The app had grown to show ~9 configuration
+  axes (mode, click position, detection method, scan area, timing,
+  threshold, click button, repeat limit, sound, auto-update) all at once,
+  all the time - overwhelming for a first-time or casual viewer. Settings
+  are now split into a **Simple** tab (mode, click position, capture, and a
+  new plain-language summary sentence describing exactly what the app is
+  currently set up to do, e.g. "Watching for the color you captured in
+  'RuneLite', clicking wherever your mouse already is when it's found.")
+  and an **Advanced** tab (detection method, scan area, and the existing
+  timing/threshold/sound/update settings panel). The Simple tab alone is
+  enough to capture a trigger and hit Start - Advanced is there when you
+  want it, not in the way when you don't.
+
+### Changed
+- **Accent color is now bronze/copper, matching the app's own logo**,
+  replacing a leftover Discord-style blue-purple that never actually
+  matched the branding. Sampled directly from the logo artwork.
+
+### Fixed
+- **Mode and Click position could be changed without taking effect until
+  Save Settings was clicked** - the same class of bug already fixed for
+  scan scope in v1.5.3. Now that Save Settings lives on a separate
+  Advanced tab, this is fixed so nothing on the Simple tab depends on a
+  control that isn't there.
+- **Detection method and Scan area stayed visible and interactive in
+  Generic mode**, even though Generic mode ignores both entirely. They now
+  hide automatically when Mode is set to Generic.
+
 ## [1.5.3] - 2026-08-17
 
 ### Fixed

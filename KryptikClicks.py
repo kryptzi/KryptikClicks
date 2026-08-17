@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.5.3"
+__version__ = "1.6.0"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -274,6 +274,31 @@ def apply_scan_region_offset(window_rect, scan_region):
         "width": scan_region["width"],
         "height": scan_region["height"],
     }
+
+
+def describe_current_setup(cfg, ready, captured_desc=""):
+    """Plain-language sentence describing what KryptikClicks is currently set
+    up to do, for the Simple tab - so a casual/non-technical viewer doesn't
+    need to parse the Advanced tab's settings to understand current behavior."""
+    if not ready:
+        return "Capture a trigger to get started."
+
+    position_phrase = (
+        "wherever your mouse already is" if cfg.get("click_position") == "cursor"
+        else "at your saved click spot"
+    )
+
+    if cfg.get("click_mode") == "generic":
+        min_ms = int(cfg.get("min_delay_ms", 0))
+        max_ms = int(cfg.get("max_delay_ms", 0))
+        return f"Clicking automatically {position_phrase} every {min_ms}-{max_ms}ms."
+
+    if cfg.get("scan_scope") == "window":
+        location_phrase = f'in "{cfg.get("scan_window_title", "")}"'
+    else:
+        location_phrase = "anywhere on your screen"
+
+    return f"Watching for {captured_desc} {location_phrase}, clicking {position_phrase} when it's found."
 
 
 def find_window_by_title(windows, title):
@@ -1079,8 +1104,8 @@ class KryptikClicksGUI:
         "text": "#f2f3f5",
         "muted": "#80848e",
         "muted_dark": "#b5bac1",
-        "accent": "#5865f2",
-        "accent_dark": "#4752c4",
+        "accent": "#B77B62",
+        "accent_dark": "#7C4939",
         "green": "#23a55a",
         "green_dark": "#1a8045",
         "amber": "#f0b232",
@@ -1239,6 +1264,21 @@ class KryptikClicksGUI:
         self.root.option_add("*TCombobox*Listbox.selectBackground", c["accent"])
         self.root.option_add("*TCombobox*Listbox.selectForeground", c["text"])
 
+        s.configure("TNotebook", background=c["bg"], borderwidth=0)
+        s.configure(
+            "TNotebook.Tab",
+            background=c["bg"],
+            foreground=c["muted"],
+            padding=(16, 8),
+            borderwidth=0,
+            font=(self.FONT, 9, "bold"),
+        )
+        s.map(
+            "TNotebook.Tab",
+            background=[("selected", c["panel_bg"])],
+            foreground=[("selected", c["accent"])],
+        )
+
         for name, base, dark in (
             ("Accent", c["accent"], c["accent_dark"]),
             ("Start", c["green"], c["green_dark"]),
@@ -1285,8 +1325,16 @@ class KryptikClicksGUI:
         )
         self.status_label.pack(anchor="w", padx=20, pady=(0, 16))
 
-        body = tk.Frame(self.root, bg=c["bg"])
-        body.grid(row=1, column=0, sticky="we")
+        # Simple tab = everything needed for the common case (capture + start/stop);
+        # Advanced tab = detection/scan tuning and numeric settings. Splitting these
+        # keeps the default view approachable instead of showing every configuration
+        # axis at once.
+        notebook = ttk.Notebook(self.root, style="TNotebook")
+        notebook.grid(row=1, column=0, sticky="we")
+        simple_tab = tk.Frame(notebook, bg=c["bg"])
+        advanced_tab = tk.Frame(notebook, bg=c["bg"])
+        notebook.add(simple_tab, text="Simple")
+        notebook.add(advanced_tab, text="Advanced")
 
         radio_kwargs = dict(
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"],
@@ -1294,20 +1342,27 @@ class KryptikClicksGUI:
             highlightthickness=0, font=(FONT, 9),
         )
 
-        tk.Label(body, text="MODE", bg=c["bg"], fg=c["muted"], font=(FONT, 8, "bold")).pack(
-            anchor="w", padx=20, pady=(14, 6)
+        # --- Simple tab ---
+        self.summary_var = tk.StringVar(value="")
+        tk.Label(
+            simple_tab, textvariable=self.summary_var, bg=c["bg"], fg=c["text"],
+            font=(FONT, 10), wraplength=400, justify="left",
+        ).pack(anchor="w", padx=20, pady=(16, 14))
+
+        tk.Label(simple_tab, text="MODE", bg=c["bg"], fg=c["muted"], font=(FONT, 8, "bold")).pack(
+            anchor="w", padx=20, pady=(0, 6)
         )
         self.mode_var = tk.StringVar(value=self.cfg["click_mode"])
         tk.Radiobutton(
-            body, text="Targeted - wait for a captured trigger image", variable=self.mode_var,
+            simple_tab, text="Targeted - wait for a captured trigger image", variable=self.mode_var,
             value="targeted", command=self._on_mode_changed, **radio_kwargs,
         ).pack(anchor="w", padx=20)
         tk.Radiobutton(
-            body, text="Generic - click on interval, no trigger needed", variable=self.mode_var,
+            simple_tab, text="Generic - click on interval, no trigger needed", variable=self.mode_var,
             value="generic", command=self._on_mode_changed, **radio_kwargs,
         ).pack(anchor="w", padx=20)
 
-        self.position_frame = tk.Frame(body, bg=c["bg"])
+        self.position_frame = tk.Frame(simple_tab, bg=c["bg"])
         self.position_frame.pack(fill="x", padx=20)
         self.position_var = tk.StringVar(value=self.cfg["click_position"])
         tk.Label(
@@ -1315,15 +1370,39 @@ class KryptikClicksGUI:
         ).pack(anchor="w", pady=(6, 2))
         tk.Radiobutton(
             self.position_frame, text="Fixed point (captured below)", variable=self.position_var,
-            value="fixed", command=self._refresh_template_label, **radio_kwargs,
+            value="fixed", command=self._on_click_position_changed, **radio_kwargs,
         ).pack(anchor="w")
         tk.Radiobutton(
             self.position_frame, text="Current cursor position", variable=self.position_var,
-            value="cursor", command=self._refresh_template_label, **radio_kwargs,
+            value="cursor", command=self._on_click_position_changed, **radio_kwargs,
         ).pack(anchor="w")
 
-        self.detection_frame = tk.Frame(body, bg=c["bg"])
-        self.detection_frame.pack(fill="x", padx=20)
+        self.template_var = tk.StringVar(value="No template captured yet.")
+        self.template_label = tk.Label(
+            simple_tab, textvariable=self.template_var, bg=c["bg"], fg=c["muted"],
+            font=(FONT, 9), wraplength=380, justify="left",
+        )
+        self.template_label.pack(anchor="w", padx=20, pady=(10, 10))
+
+        self.capture_var = tk.StringVar(value="Capture Template + Click Target...")
+        ttk.Button(
+            simple_tab, textvariable=self.capture_var, style="Accent.TButton",
+            command=self.on_capture,
+        ).pack(fill="x", padx=20, pady=(0, 10))
+
+        btn_row = tk.Frame(simple_tab, bg=c["bg"])
+        btn_row.pack(fill="x", padx=20, pady=(0, 20))
+        self.toggle_btn = ttk.Button(
+            btn_row, text="Start (F6)", style="Start.TButton", command=self.on_toggle
+        )
+        self.toggle_btn.pack(side="left", expand=True, fill="x", padx=(0, 6))
+        ttk.Button(
+            btn_row, text="Quit (F9)", style="Danger.TButton", command=self.on_quit
+        ).pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+        # --- Advanced tab ---
+        self.detection_frame = tk.Frame(advanced_tab, bg=c["bg"])
+        self.detection_frame.pack(fill="x", padx=20, pady=(16, 0))
         self.detection_method_var = tk.StringVar(value=self.cfg["detection_method"])
         tk.Label(
             self.detection_frame, text="Detection method:", bg=c["bg"], fg=c["muted"], font=(FONT, 8)
@@ -1338,7 +1417,7 @@ class KryptikClicksGUI:
             command=self._on_detection_method_changed, **radio_kwargs,
         ).pack(anchor="w")
 
-        self.scan_scope_frame = tk.Frame(body, bg=c["bg"])
+        self.scan_scope_frame = tk.Frame(advanced_tab, bg=c["bg"])
         self.scan_scope_frame.pack(fill="x", padx=20)
         self.scan_scope_var = tk.StringVar(value=self.cfg["scan_scope"])
         tk.Label(
@@ -1382,35 +1461,12 @@ class KryptikClicksGUI:
         clear_region_link.pack(side="right", padx=(0, 8))
         clear_region_link.bind("<Button-1>", lambda e: self.on_clear_scan_region())
 
-        self.template_var = tk.StringVar(value="No template captured yet.")
-        self.template_label = tk.Label(
-            body, textvariable=self.template_var, bg=c["bg"], fg=c["muted"],
-            font=(FONT, 9), wraplength=380, justify="left",
-        )
-        self.template_label.pack(anchor="w", padx=20, pady=(10, 10))
-
-        self.capture_var = tk.StringVar(value="Capture Template + Click Target...")
-        ttk.Button(
-            body, textvariable=self.capture_var, style="Accent.TButton",
-            command=self.on_capture,
-        ).pack(fill="x", padx=20, pady=(0, 10))
-
-        btn_row = tk.Frame(body, bg=c["bg"])
-        btn_row.pack(fill="x", padx=20, pady=(0, 20))
-        self.toggle_btn = ttk.Button(
-            btn_row, text="Start (F6)", style="Start.TButton", command=self.on_toggle
-        )
-        self.toggle_btn.pack(side="left", expand=True, fill="x", padx=(0, 6))
-        ttk.Button(
-            btn_row, text="Quit (F9)", style="Danger.TButton", command=self.on_quit
-        ).pack(side="left", expand=True, fill="x", padx=(6, 0))
-
-        tk.Frame(body, bg=c["border"], height=1).pack(fill="x", padx=20)
+        tk.Frame(advanced_tab, bg=c["border"], height=1).pack(fill="x", padx=20, pady=(10, 0))
         tk.Label(
-            body, text="SETTINGS", bg=c["bg"], fg=c["muted"], font=(FONT, 8, "bold"),
+            advanced_tab, text="SETTINGS", bg=c["bg"], fg=c["muted"], font=(FONT, 8, "bold"),
         ).pack(anchor="w", padx=20, pady=(16, 8))
 
-        settings = tk.Frame(body, bg=c["bg"])
+        settings = tk.Frame(advanced_tab, bg=c["bg"])
         settings.pack(fill="x", padx=20)
         settings.grid_columnconfigure(1, weight=1)
 
@@ -1482,28 +1538,32 @@ class KryptikClicksGUI:
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=7)
 
         ttk.Button(
-            body, text="Save Settings", style="Accent.TButton", command=self.on_save_settings
-        ).pack(fill="x", padx=20, pady=(10, 0))
+            advanced_tab, text="Save Settings", style="Accent.TButton", command=self.on_save_settings
+        ).pack(fill="x", padx=20, pady=(10, 16))
 
-        tk.Frame(body, bg=c["border"], height=1).pack(fill="x", padx=20, pady=(20, 0))
+        # --- Shared (outside the tabs): Activity log + footer ---
+        bottom = tk.Frame(self.root, bg=c["bg"])
+        bottom.grid(row=2, column=0, sticky="we")
+
+        tk.Frame(bottom, bg=c["border"], height=1).pack(fill="x", padx=20, pady=(4, 0))
         tk.Label(
-            body, text="ACTIVITY", bg=c["bg"], fg=c["muted"], font=(FONT, 8, "bold"),
+            bottom, text="ACTIVITY", bg=c["bg"], fg=c["muted"], font=(FONT, 8, "bold"),
         ).pack(anchor="w", padx=20, pady=(16, 8))
 
         self.log_list = tk.Listbox(
-            body, height=7, bg=c["panel_bg"], fg=c["muted_dark"], font=("Consolas", 9),
+            bottom, height=7, bg=c["panel_bg"], fg=c["muted_dark"], font=("Consolas", 9),
             bd=0, highlightthickness=1, highlightbackground=c["border"], highlightcolor=c["border"],
             selectbackground=c["accent"], selectforeground=c["text"], activestyle="none",
         )
         self.log_list.pack(fill="x", padx=20, pady=(0, 16))
 
         tk.Label(
-            body,
+            bottom,
             text="F6 toggles start/pause, F9 quits — both work even while another window has focus.",
             bg=c["bg"], fg=c["muted"], font=(FONT, 8),
         ).pack(anchor="w", padx=20, pady=(0, 4))
 
-        footer = tk.Frame(body, bg=c["bg"])
+        footer = tk.Frame(bottom, bg=c["bg"])
         footer.pack(fill="x", padx=20, pady=(0, 16))
 
         self.update_status_label = tk.Label(
@@ -1522,18 +1582,41 @@ class KryptikClicksGUI:
         check_updates_link.pack(side="right", padx=(0, 10))
         check_updates_link.bind("<Button-1>", lambda e: self.on_check_updates())
 
-        self._on_mode_changed()
         self._on_scan_scope_changed()
         self._on_detection_method_changed()
+        self._on_mode_changed()
         self._maybe_auto_check_updates()
 
     def _on_mode_changed(self):
+        # Commit immediately - this now lives on the Simple tab, and Save Settings is on
+        # a different tab entirely, so a casual user would have no reason to look for it.
+        self.cfg["click_mode"] = self.mode_var.get()
+        save_config(self.cfg)
+        # Detection method/Scan area are meaningless in Generic mode (Detector.ready/run()
+        # never consult them there) - hide them so Advanced doesn't show inert controls.
+        is_generic = self.mode_var.get() == "generic"
+        for frame in (self.detection_frame, self.scan_scope_frame):
+            if is_generic:
+                frame.pack_forget()
+            else:
+                frame.pack(fill="x", padx=20)
         # The click-position choice (fixed point / current cursor) applies to
         # both modes, so it's always shown - only the trigger-capture
         # requirement (Targeted needs a template; Generic doesn't) differs.
         self._refresh_template_label()
+        self._refresh_summary()
+
+    def _on_click_position_changed(self):
+        # Commit immediately - same reasoning as _on_mode_changed (Simple tab control).
+        self.cfg["click_position"] = self.position_var.get()
+        save_config(self.cfg)
+        self._refresh_template_label()
+        self._refresh_summary()
 
     def _on_detection_method_changed(self):
+        # Commit immediately, matching _on_scan_scope_changed's existing pattern.
+        self.cfg["detection_method"] = self.detection_method_var.get()
+        save_config(self.cfg)
         # Match threshold only means anything for image template matching -
         # color match uses the pixel count captured with the trigger instead.
         show_threshold = self.detection_method_var.get() != "color"
@@ -1543,6 +1626,7 @@ class KryptikClicksGUI:
             else:
                 widget.grid_remove()
         self._refresh_template_label()
+        self._refresh_summary()
 
     def _on_scan_scope_changed(self):
         # Commit immediately (like on_capture already does for click_mode/click_position/
@@ -1557,6 +1641,7 @@ class KryptikClicksGUI:
         else:
             self.scan_window_row.pack_forget()
             self.scan_region_row.pack_forget()
+        self._refresh_summary()
 
     def _scan_window_display_text(self, title):
         if not title:
@@ -1613,12 +1698,14 @@ class KryptikClicksGUI:
         self.scan_region_display_var.set(self._scan_region_display_text())
         sr = self.cfg["scan_region"]
         self.log(f"Scan region set: {sr['width']}x{sr['height']}px within the tracked window.")
+        self._refresh_summary()
 
     def on_clear_scan_region(self):
         self.cfg["scan_region"] = None
         save_config(self.cfg)
         self.scan_region_display_var.set(self._scan_region_display_text())
         self.log("Scan region cleared - scanning the whole window again.")
+        self._refresh_summary()
 
     def on_choose_window(self):
         import ctypes
@@ -1656,6 +1743,7 @@ class KryptikClicksGUI:
             # right away too, not silently wait for a separate Save Settings click.
             self.cfg["scan_window_title"] = title
             save_config(self.cfg)
+            self._refresh_summary()
             picker.destroy()
 
         def populate():
@@ -1785,6 +1873,13 @@ class KryptikClicksGUI:
             self.template_var.set("No trigger captured yet - click below to set it up (one-time).")
             self.capture_var.set(capture_label)
 
+    def _refresh_summary(self):
+        captured_desc = (
+            "the color you captured" if self.cfg.get("detection_method") == "color"
+            else "the picture you captured"
+        )
+        self.summary_var.set(describe_current_setup(self.cfg, self.detector.ready, captured_desc))
+
     def _refresh_status(self):
         c = self.COLORS
         if self.detector.scanning_active.is_set():
@@ -1851,6 +1946,7 @@ class KryptikClicksGUI:
         if was_scanning and self.detector.ready:
             self.detector.start_scanning()
         self._refresh_status()
+        self._refresh_summary()
 
     def on_toggle(self):
         if self.detector.scanning_active.is_set():
@@ -1886,6 +1982,7 @@ class KryptikClicksGUI:
         save_config(self.cfg)
         self._refresh_status()
         self._refresh_template_label()
+        self._refresh_summary()
         self.log("Settings saved.")
 
     def _maybe_auto_check_updates(self):
