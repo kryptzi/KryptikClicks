@@ -9,7 +9,7 @@ def test_default_config_has_generic_mode_settings(kc):
     assert cfg["scan_window_title"] == ""
     assert cfg["detection_method"] == "template"
     assert cfg["target_color"] is None
-    assert cfg["color_tolerance"] == 30
+    assert cfg["color_tolerance"] == 20
     assert cfg["min_color_pixels"] == 0
     assert cfg["scan_region"] is None
 
@@ -63,7 +63,7 @@ def test_load_config_accepts_valid_target_color(kc):
 def test_load_config_rejects_negative_color_tolerance(kc):
     kc.save_config({"color_tolerance": -5})
     cfg = kc.load_config()
-    assert cfg["color_tolerance"] == 30
+    assert cfg["color_tolerance"] == 20
 
 
 def test_load_config_rejects_negative_min_color_pixels(kc):

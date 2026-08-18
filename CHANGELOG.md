@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-08-17
+
+### Changed
+- **Accent color tightened up again** - the v1.6.1 purple read as more pink
+  than deep purple in practice. Now a fully-saturated electric violet
+  (`#8700FF`), which also sits far enough from the Start button's green to
+  stop the two from visually clashing.
+- **Start/Pause and Pause/Warning colors deepened to match** - the old
+  default green and amber were tuned for saturation levels around the
+  original Discord-blurple accent and looked flat and mismatched against the
+  new violet. Start is now a richer emerald (`#10B981`) and the amber
+  warning color a deeper burnt gold (`#D97706`), so the whole palette reads
+  as one deliberate set instead of neon-purple next to default colors.
+
+### Fixed
+- **False-positive color-trigger matches causing runaway click counts**
+  (observed: ~1450 clicks where the same task previously finished in
+  ~140). Root cause was color detection matching more broadly than
+  intended - default color match tolerance tightened from 30 to 20 per
+  RGB channel.
+- **Clicking Start could immediately click itself back to Pause.** In
+  cursor-position mode, clicking wherever the mouse currently is means
+  right after pressing Start the mouse is still resting on the Start
+  button - if a trigger was already visible (or in Generic mode, which
+  has no trigger to wait for), the very first scan tick could click that
+  same button and pause the scan that had just started. Added a 0.75s
+  grace period after Start before any real click can fire, giving time to
+  move the mouse away first.
+
 ## [1.6.1] - 2026-08-17
 
 ### Changed

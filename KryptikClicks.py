@@ -27,7 +27,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.6.1"
+__version__ = "1.6.2"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
     "scan_window_title": "",
     "detection_method": "template",
     "target_color": None,
-    "color_tolerance": 30,
+    "color_tolerance": 20,
     "min_color_pixels": 0,
     "scan_region": None,
 }
@@ -673,6 +673,14 @@ class Detector:
     # that matches most of the window) can run before being re-verified.
     MAX_CLICKS_PER_BURST = 5
 
+    # How long after Start is pressed before a real click can fire. Cursor-
+    # position mode clicks wherever the mouse currently is - right after
+    # pressing Start, that's still resting on the Start button - so an
+    # immediate match (or Generic mode, which has no trigger to wait for)
+    # could click that same button and pause the scan that just started.
+    # This gives the user a moment to move the mouse away first.
+    START_CLICK_GRACE_SECONDS = 0.75
+
     def __init__(self, cfg, log=print):
         import cv2
         import mss
@@ -690,10 +698,15 @@ class Detector:
 
         self.scanning_active = threading.Event()
         self.stop_event = threading.Event()
+        self._started_at = 0.0
 
     def start_scanning(self):
         self.total_clicks = 0
+        self._started_at = time.monotonic()
         self.scanning_active.set()
+
+    def _grace_period_active(self):
+        return time.monotonic() - self._started_at < self.START_CLICK_GRACE_SECONDS
 
     def pause_scanning(self):
         self.scanning_active.clear()
@@ -945,7 +958,7 @@ class Detector:
 
         try:
             while not self.stop_event.is_set():
-                if not (self.scanning_active.is_set() and self.ready):
+                if not (self.scanning_active.is_set() and self.ready) or self._grace_period_active():
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -1104,12 +1117,12 @@ class KryptikClicksGUI:
         "text": "#f2f3f5",
         "muted": "#80848e",
         "muted_dark": "#b5bac1",
-        "accent": "#A90BBE",
-        "accent_dark": "#6E077C",
-        "green": "#23a55a",
-        "green_dark": "#1a8045",
-        "amber": "#f0b232",
-        "amber_dark": "#d1971e",
+        "accent": "#8700FF",
+        "accent_dark": "#5800A6",
+        "green": "#10B981",
+        "green_dark": "#059669",
+        "amber": "#D97706",
+        "amber_dark": "#B45309",
         "red": "#f23f42",
         "red_dark": "#da373c",
     }

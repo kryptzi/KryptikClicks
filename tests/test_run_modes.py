@@ -45,6 +45,38 @@ def test_generic_mode_clicks_immediately_without_a_trigger_and_stops_at_limit(kc
     assert d.scanning_active.is_set() is False  # auto-paused itself on hitting the limit
 
 
+def test_no_click_fires_before_the_start_grace_period_elapses(kc, monkeypatch):
+    # Cursor-position mode clicks wherever the mouse currently is - right after
+    # pressing Start, that's still on the Start button itself. If a trigger is
+    # already visible (or Generic mode, which has no trigger to wait for at
+    # all), the very first scan tick could click immediately and hit the
+    # button under the mouse, pausing the very scan that just started. A short
+    # grace period after start_scanning() gives the user a moment to move the
+    # mouse off the button before any real click can fire.
+    cfg = kc.load_config()
+    cfg["click_mode"] = "generic"
+    cfg["click_position"] = "fixed"
+    cfg["click_limit"] = 1
+    cfg["min_delay_ms"] = 0
+    cfg["max_delay_ms"] = 1
+
+    d = kc.Detector(cfg, log=lambda m: None)
+    d.click_x, d.click_y = 5, 5
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0.2)
+
+    calls = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: calls.append(a))
+
+    started_at = time.monotonic()
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+    elapsed = time.monotonic() - started_at
+
+    assert len(calls) == 1
+    assert elapsed >= 0.2
+
+
 def test_targeted_mode_only_clicks_while_a_match_is_found_and_stops_at_limit(kc, monkeypatch):
     from PIL import Image
 
@@ -203,6 +235,7 @@ def test_targeted_cursor_mode_clicks_once_then_waits_for_trigger_to_disappear(kc
     cfg["max_delay_ms"] = 1
 
     d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
 
     # Simulate the trigger being permanently visible so we don't depend on real screen content.
     monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
@@ -241,6 +274,7 @@ def test_targeted_cursor_mode_clicks_again_after_max_wait_even_if_still_matching
     cfg["max_delay_ms"] = 1
 
     d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
     monkeypatch.setattr(kc.Detector, "CURSOR_MODE_MAX_WAIT_SECONDS", 0.05)
 
     # Simulate a local region that never stops matching (the bug scenario).
