@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Cursor-position mode ignored the configured click delay.** Repeat clicks
+  in cursor-position mode (firing again after the max-wait-for-disappearance
+  timeout while the trigger is still visible) never applied `min_delay_ms`/
+  `max_delay_ms` - that setting had zero effect for anyone using cursor
+  position, only fixed-position mode's burst re-click loop honored it.
+
 ## [1.6.2] - 2026-08-17
 
 ### Changed

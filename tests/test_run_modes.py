@@ -296,6 +296,49 @@ def test_targeted_cursor_mode_clicks_again_after_max_wait_even_if_still_matching
     assert len(calls) >= 3
 
 
+def test_targeted_cursor_mode_waits_configured_delay_between_repeat_clicks(kc, monkeypatch):
+    # min_delay_ms/max_delay_ms is meant to space out repeat clicks (e.g. to
+    # look less robotic), but cursor-position mode's repeat-click path (firing
+    # again after CURSOR_MODE_MAX_WAIT_SECONDS elapses with the trigger still
+    # matching) never called sleep_between_clicks() - the configured delay had
+    # zero effect for anyone using cursor-position mode. Gap between repeat
+    # clicks should reflect min_delay_ms on top of the max-wait, not just the
+    # max-wait alone.
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["click_position"] = "cursor"
+    cfg["min_delay_ms"] = 200
+    cfg["max_delay_ms"] = 200
+
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    monkeypatch.setattr(kc.Detector, "CURSOR_MODE_MAX_WAIT_SECONDS", 0.02)
+
+    # Simulate a local region that never stops matching, forcing the repeat-click
+    # (max-wait timeout) path rather than the "waited for disappearance" path.
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
+
+    click_times = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.monotonic()))
+    monkeypatch.setattr(pyautogui, "position", lambda: (5, 5))
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    t.join(0.7)
+    d.stop_event.set()
+    t.join(2.0)
+
+    assert len(click_times) >= 2
+    gaps = [b - a for a, b in zip(click_times, click_times[1:])]
+    assert all(gap >= 0.18 for gap in gaps), gaps
+
+
 def test_targeted_mode_scans_per_physical_monitor_not_the_combined_desktop(kc, monkeypatch):
     # A single scan against the full multi-monitor virtual desktop is slow (hundreds of
     # ms), which can miss a trigger that only flashes on screen briefly. Scanning each

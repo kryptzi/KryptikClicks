@@ -1017,6 +1017,7 @@ class Detector:
                             scan_tick()
                             match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
                         if timed_out:
+                            sleep_between_clicks()
                             continue  # still (probably) there - click again rather than wait longer
                         break
                     if burst_clicks >= self.MAX_CLICKS_PER_BURST:
