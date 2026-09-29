@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delay. It now takes 3 misses in a row (~60ms) to count as gone. The
   "still there after 2s, click again" path also re-checks after its delay,
   so it doesn't click a trigger that vanished during that delay.
+- **Fixed-position mode double-clicked every 6th click.** After 5 clicks
+  it re-verifies the trigger with a fresh full scan, but skipped the click
+  delay before doing so - so the next click came ~1ms after the previous one.
 - **One unexpected error could silently stop all detection until restart.**
   Only the screen-capture/matching step itself was protected; anything else
   going wrong in the scan loop (e.g. a Windows display call failing during a

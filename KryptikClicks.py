@@ -1135,9 +1135,9 @@ class Detector:
                                 match = safe_find_match(self._recheck_region(match, hit_region))
                                 continue
                             break
+                        sleep_between_clicks()
                         if burst_clicks >= self.MAX_CLICKS_PER_BURST:
                             break  # force a fresh full-region scan instead of trusting a stale local match
-                        sleep_between_clicks()
                         scan_tick()
                         match = safe_find_match(self._recheck_region(match, hit_region))
                     trigger_still_showing = match is not None

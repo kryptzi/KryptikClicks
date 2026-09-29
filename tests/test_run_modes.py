@@ -982,3 +982,20 @@ def test_cursor_mode_does_not_treat_one_missed_sample_as_the_trigger_disappearin
 
     assert len(clicks) == 1
 
+
+def test_fixed_mode_burst_cap_rescan_still_waits_the_click_delay(kc, monkeypatch):
+    # The cap `break` skipped sleep_between_clicks(), so the first click after every
+    # forced re-scan fired ~1ms after the previous one - a double-click every 6th click.
+    d = _fixed_template_detector(kc, monkeypatch, click_limit=5, min_delay_ms=100, max_delay_ms=100)
+    monkeypatch.setattr(kc.Detector, "MAX_CLICKS_PER_BURST", 2)
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
+    click_times = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.monotonic()))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    assert len(click_times) == 5
+    gaps = [b - a for a, b in zip(click_times, click_times[1:])]
+    assert min(gaps) >= 0.09, gaps
