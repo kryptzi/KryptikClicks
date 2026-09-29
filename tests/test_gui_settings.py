@@ -456,3 +456,21 @@ def test_every_advanced_setting_has_a_hover_tooltip(gui):
     # The README says to hover any setting for details - these four had none.
     for widget in (gui.detection_label, gui.scan_area_label, gui.sound_check, gui.auto_update_check):
         assert widget.bind("<Enter>"), widget
+
+
+def test_generic_capture_with_color_detection_but_no_color_captured(kc, make_gui, monkeypatch):
+    # Generic mode never uses the trigger, but _refresh_template_label described it
+    # anyway - tuple(None) for a Color-match setting with no color captured - so
+    # capturing a Generic click point crashed, and since the same refresh runs at
+    # startup, the app then failed to open every time.
+    from PIL import Image
+
+    kc.save_config({"click_mode": "generic", "click_position": "fixed", "detection_method": "color"})
+    monkeypatch.setattr(kc, "run_capture_ui", lambda **kwargs: (None, (50, 60), Image.new("RGB", (10, 10))))
+    app = make_gui()
+
+    app.on_capture()
+
+    assert (app.detector.click_x, app.detector.click_y) == (50, 60)
+    assert "50, 60" in app.template_var.get()
+    make_gui()  # ...and it still opens next time

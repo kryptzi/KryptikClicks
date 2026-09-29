@@ -2318,7 +2318,9 @@ class KryptikClicksGUI:
         ready_for_mode = (not needs_template or have_trigger) and (not needs_point or have_point)
 
         if ready_for_mode:
-            if color_mode:
+            if not needs_template:
+                trigger_desc = None  # Generic: no trigger (and target_color may be None)
+            elif color_mode:
                 trigger_desc = f"color RGB{tuple(self.cfg['target_color'])}"
             else:
                 trigger_desc = f"{self.detector.t_w}x{self.detector.t_h}px template"
