@@ -71,7 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the trigger, so it kept clicking - in cursor mode, right where you were
   dragging or picking. Both now pause clicking while open and resume
   afterwards (including after Esc/Cancel), like capturing a trigger already
-  did.
+  did. Resuming after any of the three now keeps the click count, so the
+  *Repeat limit* still counts the clicks from before (it used to start over).
 - **Capturing a color calibrated its pixel threshold at the wrong
   tolerance.** The minimum pixel count is set to half the matching pixels in
   your capture, but those were always counted at the default tolerance (20)

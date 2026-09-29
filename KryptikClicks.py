@@ -939,6 +939,12 @@ class Detector:
 
     def start_scanning(self):
         self.total_clicks = 0
+        self.resume_scanning()
+
+    def resume_scanning(self):
+        """Carries on after a pause the app made itself (around a capture/selection
+        overlay): re-arms the start grace period, but keeps the click count, so the
+        Repeat limit still counts clicks from before the pause."""
         self._started_at = time.monotonic()
         self.scanning_active.set()
 
@@ -2059,7 +2065,7 @@ class KryptikClicksGUI:
             if not self._quitting:
                 self.root.deiconify()
                 if was_scanning and self.detector.ready:
-                    self.detector.start_scanning()
+                    self.detector.resume_scanning()
         if self._quitting:
             return  # F9 during the overlay - the window is already gone
         if box is None:
@@ -2109,7 +2115,7 @@ class KryptikClicksGUI:
 
         def on_picker_closed(event):
             if event.widget is picker and was_scanning and self.detector.ready:
-                self.detector.start_scanning()
+                self.detector.resume_scanning()
 
         picker.bind("<Destroy>", on_picker_closed)
 
@@ -2379,7 +2385,7 @@ class KryptikClicksGUI:
             else:
                 self.log(f"Captured new {trigger_desc} trigger.")
         if was_scanning and self.detector.ready:
-            self.detector.start_scanning()
+            self.detector.resume_scanning()
         self._refresh_status()
         self._refresh_summary()
 

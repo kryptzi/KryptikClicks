@@ -414,3 +414,21 @@ def test_an_update_check_that_cannot_reach_github_says_so(gui, monkeypatch, fail
 
     assert _pump_until(gui, lambda: gui.update_status_label.cget("text") != "Checking for updates...")
     assert "couldn't check" in gui.update_status_label.cget("text").lower()
+
+
+def test_resuming_after_the_window_picker_keeps_the_click_count(kc, gui, monkeypatch):
+    # The pause/resume around the picker (and region overlay, and capture) went through
+    # start_scanning(), which zeroes total_clicks - so with a Repeat limit of 10, six
+    # clicks, then opening and closing the picker allowed another ten.
+    monkeypatch.setattr(kc, "list_visible_windows", lambda exclude_hwnd=None: [])
+    _ready_and_scanning(kc, gui)
+    gui.detector.total_clicks = 6
+
+    gui.on_choose_window()
+    picker = [w for w in gui.root.winfo_children() if w.winfo_class() == "Toplevel"][-1]
+    picker.destroy()
+    gui.root.update()
+
+    assert gui.detector.scanning_active.is_set()
+    assert gui.detector.total_clicks == 6
+    assert gui.detector._grace_period_active()  # still gets the start grace, like a fresh Start
