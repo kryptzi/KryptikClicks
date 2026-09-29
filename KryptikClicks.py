@@ -1374,6 +1374,7 @@ class KryptikClicksGUI:
 
         self.tk = tk
         self.messagebox = messagebox
+        self._quitting = False
 
         startup_warnings = []
         self.cfg = load_config(on_warning=startup_warnings.append)
@@ -1966,9 +1967,12 @@ class KryptikClicksGUI:
                             "excluding sidebars/menus). Esc to cancel.",
             )
         finally:
-            self.root.deiconify()
-            if was_scanning and self.detector.ready:
-                self.detector.start_scanning()
+            if not self._quitting:
+                self.root.deiconify()
+                if was_scanning and self.detector.ready:
+                    self.detector.start_scanning()
+        if self._quitting:
+            return  # F9 during the overlay - the window is already gone
         if box is None:
             self.log("Scan region selection cancelled.")
             return
@@ -2222,7 +2226,10 @@ class KryptikClicksGUI:
         try:
             box, point, full_img = run_capture_ui(parent=self.root, require_click_point=require_point)
         finally:
-            self.root.deiconify()
+            if not self._quitting:
+                self.root.deiconify()
+        if self._quitting:
+            return  # F9 during the overlay - the window is already gone
         if box is None:
             self.log("Capture cancelled.")
         else:
@@ -2323,6 +2330,9 @@ class KryptikClicksGUI:
             webbrowser.open(update["download_url"])
 
     def on_quit(self):
+        # F9 can arrive while a capture overlay's nested event loop is running; the
+        # flow that opened it checks this before touching the destroyed window.
+        self._quitting = True
         self.detector.stop_event.set()
         self.detector.pause_scanning()
         self.listener.stop()

@@ -37,7 +37,10 @@ def make_gui(kc, monkeypatch):
     for app in apps:
         app.detector.stop_event.set()
         app.worker_thread.join(2.0)
-        app.root.destroy()
+        try:
+            app.root.destroy()
+        except tk.TclError:
+            pass  # the test already quit the app
     apps.clear()
     gc.collect()
 
@@ -203,3 +206,23 @@ def test_choose_window_picker_pauses_clicking_until_it_closes(kc, gui, monkeypat
     picker.destroy()
     gui.root.update()
     assert gui.detector.scanning_active.is_set()
+
+
+@pytest.mark.parametrize("flow", ["on_capture", "on_define_scan_region"])
+def test_quitting_with_f9_while_an_overlay_is_open_exits_cleanly(kc, gui, monkeypatch, flow):
+    # F9 is dispatched onto the Tk thread and runs inside the overlay's nested event
+    # loop, destroying the root; the flow's `finally: root.deiconify()` then raised
+    # TclError, shown as a "KryptikClicks - unexpected error" dialog on the way out.
+    gui.scan_window_title_var.set("RuneLite")
+    monkeypatch.setattr(kc, "list_visible_windows", lambda exclude_hwnd=None: [(7, "RuneLite")])
+    monkeypatch.setattr(kc, "get_window_rect", lambda hwnd: {"left": 0, "top": 0, "width": 800, "height": 600})
+
+    def quit_during_overlay(**kwargs):
+        gui.on_quit()  # what the F9 hotkey does
+        return None, None, None
+
+    monkeypatch.setattr(kc, "run_capture_ui", quit_during_overlay)
+
+    getattr(gui, flow)()  # must not raise
+
+    assert gui.detector.stop_event.is_set()

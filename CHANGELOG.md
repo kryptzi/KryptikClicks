@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   captured frame.
 
 ### Fixed
+- **Quitting with F9 while a capture overlay was open showed an
+  "unexpected error" pop-up** on the way out. It now just quits.
 - **Clicking carried on underneath *Limit to Region...* and *Choose
   Window...*.** The region overlay is a frozen snapshot that can still show
   the trigger, so it kept clicking - in cursor mode, right where you were
