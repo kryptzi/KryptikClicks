@@ -34,7 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   screen captures), with bit-for-bit identical results. That means less CPU
   taken from the game and a trigger noticed a few ms sooner on each scan.
   Both detection methods also stopped making a needless copy of every
-  captured frame.
+  captured frame, and OpenCV now runs single-threaded: its thread pool was
+  spin-waiting after every scan, so a color scan now costs about 0.55ms of
+  CPU instead of 3.35ms (same speed, same results).
 - **The clicker no longer waits on the window.** Activity-log messages from
   the background scanner, F6/F9, and the update check are now handed to the
   window through a queue instead of calling into it directly - which made

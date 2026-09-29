@@ -924,6 +924,10 @@ class Detector:
         import cv2
         import mss
 
+        # OpenCV's thread pool spin-waits after every scan's small reductions: measured
+        # 3.35ms of CPU per color scan vs 0.55ms single-threaded, same wall time and
+        # results, and no measurable change to template matching. Less CPU from the game.
+        cv2.setNumThreads(1)
         self.cv2 = cv2
         self.mss = mss
         self.cfg = cfg

@@ -148,3 +148,14 @@ def test_fast_color_match_on_a_full_size_frame(kc):
 
     assert result == _reference_color_match(frame, target, tolerance)
     assert result[0] >= 120 * 150
+
+
+def test_detector_runs_opencv_single_threaded(kc):
+    # cv2's default thread pool (12 threads here) spin-waits after every scan's small
+    # reductions: measured 3.35ms of CPU per color scan vs 0.55ms single-threaded, with
+    # the same wall time and results, and no slowdown for template matching.
+    import cv2
+
+    kc.Detector(kc.load_config(), log=lambda m: None)
+
+    assert cv2.getNumThreads() == 1
