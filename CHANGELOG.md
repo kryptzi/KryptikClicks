@@ -70,7 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pausing or quitting during a long click delay had to wait it out.** With
   e.g. a multi-minute Generic-mode interval, F6/F9 only took effect when the
   current delay ended. The wait now notices pause/quit within ~20ms, while
-  keeping short delays exactly as precise as before.
+  keeping short delays exactly as precise as before. This also stops a quick
+  Pause-then-Start from resuming the old click burst inside the new start's
+  0.75s grace period (which could click the Start button and pause again).
 - **Color match could "see" the trigger on a screen with none of its color
   at all.** If the saved minimum pixel count was missing or invalid in the
   config file it fell back to 0, and a frame with zero matching pixels

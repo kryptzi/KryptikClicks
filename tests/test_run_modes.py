@@ -1029,3 +1029,39 @@ def test_switching_generic_to_targeted_while_running_stops_blind_clicking(kc, mo
     t.join(2.0)
 
     assert [c for c in clicks if c > switched_at + 0.05] == []
+
+
+@pytest.mark.parametrize("position", ["fixed", "cursor"])
+def test_pause_then_start_mid_burst_still_honours_the_start_grace_period(kc, monkeypatch, position):
+    # Pausing and restarting while the worker sat in an in-burst delay used to resume
+    # the OLD burst and click inside the new session's grace period - in cursor mode
+    # that's on the Start button itself, re-pausing the scan (what 1.6.2's grace fixed).
+    d = _fixed_template_detector(
+        kc, monkeypatch, click_position=position, min_delay_ms=359, max_delay_ms=359,
+    )
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0.75)
+    monkeypatch.setattr(kc.Detector, "CURSOR_MODE_MAX_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
+    click_times = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.monotonic()))
+    monkeypatch.setattr(pyautogui, "position", lambda: (5, 5))
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    deadline = time.monotonic() + 3
+    while not click_times and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert click_times, "never clicked"
+    time.sleep(0.1)  # now inside the post-click delay
+    d.pause_scanning()
+    time.sleep(0.1)
+    d.start_scanning()
+    restarted_at = time.monotonic()
+    time.sleep(1.0)
+    d.stop_event.set()
+    t.join(2.0)
+
+    early = [c - restarted_at for c in click_times if restarted_at <= c < restarted_at + 0.74]
+    assert early == []
