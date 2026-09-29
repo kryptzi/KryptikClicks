@@ -57,3 +57,30 @@ def test_analyze_color_trigger_ignores_dark_pixels_with_deceptively_high_saturat
 
     assert target_color == (127, 60, 179)
     assert pixel_count == 4
+
+
+class _FakeSct:
+    """Stands in for an mss instance: grab() returns a BGRA frame of one flat color."""
+
+    def __init__(self, bgra=(0, 0, 0, 255)):
+        self.bgra = bgra
+
+    def grab(self, region):
+        frame = np.empty((region["height"], region["width"], 4), dtype=np.uint8)
+        frame[:] = self.bgra
+        return frame
+
+
+def test_color_mode_never_matches_a_frame_with_zero_target_pixels(kc):
+    # load_config falls back to min_color_pixels=0 when the saved value is missing or
+    # corrupt, and a frame with no target-colored pixels scores 0 - "0 >= 0" used to
+    # count as a match, so an all-black screen triggered nonstop clicking.
+    cfg = kc.load_config()
+    cfg.update(detection_method="color", target_color=[102, 46, 143], min_color_pixels=0)
+    d = kc.Detector(cfg, log=lambda m: None)
+
+    region = {"left": 0, "top": 0, "width": 50, "height": 40}
+
+    assert d._find_match_in(_FakeSct(bgra=(0, 0, 0, 255)), region) is None
+    # ...while a frame that really is the target color still matches.
+    assert d._find_match_in(_FakeSct(bgra=(143, 46, 102, 255)), region) is not None

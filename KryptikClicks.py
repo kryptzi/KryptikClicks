@@ -843,7 +843,9 @@ class Detector:
 
     def _score_threshold(self):
         if self.cfg.get("detection_method") == "color":
-            return self.cfg.get("min_color_pixels", DEFAULT_CONFIG["min_color_pixels"])
+            # Floor of 1: a frame with no target-colored pixels scores 0, and a 0
+            # threshold (load_config's fallback for a bad value) would count it as a hit.
+            return max(1, self.cfg.get("min_color_pixels", DEFAULT_CONFIG["min_color_pixels"]))
         return self.cfg.get("match_threshold", DEFAULT_CONFIG["match_threshold"])
 
     def _find_match_in(self, sct, region):

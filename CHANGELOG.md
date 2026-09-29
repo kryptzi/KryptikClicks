@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wherever your mouse already is 200-400ms after it's found.").
 
 ### Fixed
+- **Color match could "see" the trigger on a screen with none of its color
+  at all.** If the saved minimum pixel count was missing or invalid in the
+  config file it fell back to 0, and a frame with zero matching pixels
+  scores 0 - which counted as a match, so it clicked nonstop on a blank or
+  black screen. A color match now always needs at least one matching pixel.
 - **Switching Mode to Generic and back scrambled the Advanced tab.** Hiding
   *Detection method* and *Scan area* for Generic mode and showing them again
   re-added them at the bottom of the tab, below the settings and the Save
