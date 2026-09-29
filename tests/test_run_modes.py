@@ -812,3 +812,84 @@ def test_short_click_delays_stay_short(kc, monkeypatch):
     assert len(click_times) == 20
     gaps = sorted(b - a for a, b in zip(click_times, click_times[1:]))
     assert gaps[len(gaps) // 2] < 0.008, gaps  # median gap: ~1-2ms expected, ~15ms if imprecise
+
+
+def _fixed_template_detector(kc, monkeypatch, **overrides):
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+    with open(kc.TARGET_PATH, "w") as f:
+        f.write("5,5")
+    cfg = kc.load_config()
+    cfg.update({"click_mode": "targeted", "click_position": "fixed", "min_delay_ms": 0, "max_delay_ms": 1})
+    cfg.update(overrides)
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    return d
+
+
+def test_an_unexpected_error_in_the_scan_loop_does_not_kill_the_worker(kc, monkeypatch):
+    # The loop only had a `finally`, so anything raising outside the safe_* wrappers
+    # (a ctypes window call, mss, ...) ended the thread for good while the UI kept
+    # showing "Scanning" - no clicks until the app was restarted.
+    d = _fixed_template_detector(kc, monkeypatch, click_limit=2)
+    logs = []
+    d.log = logs.append
+    calls = [0]
+
+    def flaky_regions(self, cached_hwnd, sct):
+        calls[0] += 1
+        if calls[0] == 1:
+            raise OSError("simulated display reconfiguration")
+        return [{"left": 0, "top": 0, "width": 100, "height": 100}], None, "ok"
+
+    monkeypatch.setattr(kc.Detector, "_resolve_scan_regions", flaky_regions)
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
+    clicks = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(a))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    assert len(clicks) == 2
+    assert any("simulated display reconfiguration" in m for m in logs)
+
+
+def test_a_failed_mss_refresh_keeps_the_old_capture_instance(kc, monkeypatch):
+    # The periodic mss re-create closed the old instance first, so if building the new
+    # one failed (e.g. mid display change) there was no working instance left at all.
+    d = _fixed_template_detector(kc, monkeypatch, click_limit=3)
+    monkeypatch.setattr(kc.Detector, "MSS_REFRESH_INTERVAL", 1)  # refresh on every scan tick
+    real_mss = d.mss
+    made = [0]
+
+    class FlakyMssModule:
+        @staticmethod
+        def mss():
+            made[0] += 1
+            if made[0] > 1:
+                raise RuntimeError("simulated CreateCompatibleDC failure")
+            return real_mss.mss()
+
+    d.mss = FlakyMssModule
+    monkeypatch.setattr(
+        kc.Detector, "_resolve_scan_regions",
+        lambda self, cached_hwnd, sct: ([{"left": 0, "top": 0, "width": 100, "height": 100}], None, "ok"),
+    )
+    grabbed_with = []
+
+    def scoring(self, sct, region):
+        grabbed_with.append(sct)
+        return (5, 5, 1.0)
+
+    monkeypatch.setattr(kc.Detector, "_match_score_in", scoring)
+    clicks = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(a))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    assert len(clicks) == 3
+    assert grabbed_with and all(s is grabbed_with[0] for s in grabbed_with)  # kept using the original

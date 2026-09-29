@@ -715,6 +715,11 @@ class Detector:
     # This gives the user a moment to move the mouse away first.
     START_CLICK_GRACE_SECONDS = 0.75
 
+    # mss accumulates Windows GDI resources over a long-running capture loop and
+    # gradually slows down; recreating it every this-many scan ticks keeps capture
+    # speed steady.
+    MSS_REFRESH_INTERVAL = 300
+
     def __init__(self, cfg, log=print):
         import cv2
         import mss
@@ -906,9 +911,6 @@ class Detector:
         pyautogui.FAILSAFE = False
         pyautogui.PAUSE = 0  # we control click timing ourselves
 
-        # mss accumulates Windows GDI resources over a long-running capture loop and
-        # gradually slows down; periodically recreating it keeps capture speed steady.
-        MSS_REFRESH_INTERVAL = 300
         sct = self.mss.mss()
         scan_count = 0
         last_error_log = 0.0
@@ -922,37 +924,44 @@ class Detector:
         # one task, so a bigger pool just sits idle rather than causing any problem.
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(sct.monitors[1:])))
 
+        def log_error(prefix, e):
+            # Rate-limited so a persistent failure doesn't flood the Activity log.
+            nonlocal last_error_log
+            now = time.monotonic()
+            if now - last_error_log > 5.0:
+                self.log(f"{prefix} (continuing): {e}")
+                last_error_log = now
+
         def scan_tick():
             nonlocal sct, scan_count
             scan_count += 1
-            if scan_count % MSS_REFRESH_INTERVAL == 0:
+            if scan_count % self.MSS_REFRESH_INTERVAL == 0:
+                # Build the replacement before closing the old one - if that fails
+                # (e.g. mid display change), keep capturing with the old instance.
+                try:
+                    fresh = self.mss.mss()
+                except Exception as e:
+                    log_error("Capture refresh error", e)
+                    return
                 sct.close()
-                sct = self.mss.mss()
+                sct = fresh
 
         def safe_find_match(region):
             # A transient capture/match error shouldn't permanently kill background
             # detection - log it (rate-limited) and treat the frame as a miss.
-            nonlocal last_error_log
             try:
                 return self._find_match_in(sct, region)
             except Exception as e:
-                now = time.monotonic()
-                if now - last_error_log > 5.0:
-                    self.log(f"Scan error (continuing): {e}")
-                    last_error_log = now
+                log_error("Scan error", e)
                 return None
 
         def safe_score_threaded(region):
             # mss instances aren't thread-safe, so each worker thread grabs its own.
-            nonlocal last_error_log
             try:
                 with self.mss.mss() as thread_sct:
                     return self._match_score_in(thread_sct, region)
             except Exception as e:
-                now = time.monotonic()
-                if now - last_error_log > 5.0:
-                    self.log(f"Scan error (continuing): {e}")
-                    last_error_log = now
+                log_error("Scan error", e)
                 return None
 
         def scan_regions(regions):
@@ -1030,78 +1039,85 @@ class Detector:
 
         try:
             while not self.stop_event.is_set():
-                if not (self.scanning_active.is_set() and self.ready) or self._grace_period_active():
-                    trigger_still_showing = False
-                    time.sleep(SCAN_INTERVAL)
-                    continue
+                # Anything unexpected (ctypes window calls, capture, ...) must not end the
+                # thread - that silently stops all detection while the UI says Scanning.
+                try:
+                    if not (self.scanning_active.is_set() and self.ready) or self._grace_period_active():
+                        trigger_still_showing = False
+                        time.sleep(SCAN_INTERVAL)
+                        continue
 
-                if self.cfg.get("click_mode", "targeted") == "generic":
-                    # No trigger to wait for - click on interval for as long as it's active.
-                    self._beep()
-                    while self.scanning_active.is_set() and not self.stop_event.is_set():
-                        if click_and_check_limit():
-                            break
-                        sleep_between_clicks()
-                    continue
+                    if self.cfg.get("click_mode", "targeted") == "generic":
+                        # No trigger to wait for - click on interval for as long as it's active.
+                        self._beep()
+                        while self.scanning_active.is_set() and not self.stop_event.is_set():
+                            if click_and_check_limit():
+                                break
+                            sleep_between_clicks()
+                        continue
 
-                scan_tick()
-                match, hit_region = scan_for_trigger()
-                if match is None:
-                    trigger_still_showing = False
-                    time.sleep(SCAN_INTERVAL)
-                    continue
-
-                trigger_delay = 0.0 if trigger_still_showing else random.uniform(
-                    self.cfg.get("trigger_delay_min_ms", 0), self.cfg.get("trigger_delay_max_ms", 0)
-                ) / 1000.0
-                if trigger_delay > 0:
-                    self.log(f"Trigger detected - clicking in {round(trigger_delay * 1000)}ms...")
-                    if not wait_while_active(trigger_delay):
-                        continue  # paused/quit mid-wait - drop the pending click
-                    # Re-scan everything (not just around the old spot) - the window may
-                    # have moved or been minimized while we waited.
                     scan_tick()
                     match, hit_region = scan_for_trigger()
                     if match is None:
-                        self.log("Trigger disappeared during the delay - not clicking.")
+                        trigger_still_showing = False
+                        time.sleep(SCAN_INTERVAL)
                         continue
-                else:
-                    self.log("Trigger detected - clicking...")
-                self._beep()
-                cursor_mode = self.cfg.get("click_position") == "cursor"
-                burst_clicks = 0
-                while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
-                    if click_and_check_limit():
-                        break
-                    burst_clicks += 1
-                    if cursor_mode:
-                        # Cursor-position mode clicks wherever the mouse already is, not on
-                        # the trigger - so unlike fixed-position mode, clicking doesn't make
-                        # the trigger go away on its own. Wait for it to actually disappear
-                        # before treating a later sighting as a new detection, instead of
-                        # re-clicking every cycle while it just sits there. But don't wait
-                        # forever - ambient content near the trigger can keep the local
-                        # region reading as a match well after the real trigger is gone.
-                        wait_start = time.monotonic()
-                        timed_out = False
-                        while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
-                            if time.monotonic() - wait_start > self.CURSOR_MODE_MAX_WAIT_SECONDS:
-                                timed_out = True
-                                break
-                            time.sleep(SCAN_INTERVAL)
-                            scan_tick()
-                            match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
-                        if timed_out:
-                            sleep_between_clicks()
-                            continue  # still (probably) there - click again rather than wait longer
-                        break
-                    if burst_clicks >= self.MAX_CLICKS_PER_BURST:
-                        break  # force a fresh full-region scan instead of trusting a stale local match
-                    sleep_between_clicks()
-                    scan_tick()
-                    match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
-                trigger_still_showing = match is not None
-                self.log(f"Stopped clicking ({self.total_clicks} clicks this session).")
+
+                    trigger_delay = 0.0 if trigger_still_showing else random.uniform(
+                        self.cfg.get("trigger_delay_min_ms", 0), self.cfg.get("trigger_delay_max_ms", 0)
+                    ) / 1000.0
+                    if trigger_delay > 0:
+                        self.log(f"Trigger detected - clicking in {round(trigger_delay * 1000)}ms...")
+                        if not wait_while_active(trigger_delay):
+                            continue  # paused/quit mid-wait - drop the pending click
+                        # Re-scan everything (not just around the old spot) - the window may
+                        # have moved or been minimized while we waited.
+                        scan_tick()
+                        match, hit_region = scan_for_trigger()
+                        if match is None:
+                            self.log("Trigger disappeared during the delay - not clicking.")
+                            continue
+                    else:
+                        self.log("Trigger detected - clicking...")
+                    self._beep()
+                    cursor_mode = self.cfg.get("click_position") == "cursor"
+                    burst_clicks = 0
+                    while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
+                        if click_and_check_limit():
+                            break
+                        burst_clicks += 1
+                        if cursor_mode:
+                            # Cursor-position mode clicks wherever the mouse already is, not on
+                            # the trigger - so unlike fixed-position mode, clicking doesn't make
+                            # the trigger go away on its own. Wait for it to actually disappear
+                            # before treating a later sighting as a new detection, instead of
+                            # re-clicking every cycle while it just sits there. But don't wait
+                            # forever - ambient content near the trigger can keep the local
+                            # region reading as a match well after the real trigger is gone.
+                            wait_start = time.monotonic()
+                            timed_out = False
+                            while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
+                                if time.monotonic() - wait_start > self.CURSOR_MODE_MAX_WAIT_SECONDS:
+                                    timed_out = True
+                                    break
+                                time.sleep(SCAN_INTERVAL)
+                                scan_tick()
+                                match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
+                            if timed_out:
+                                sleep_between_clicks()
+                                continue  # still (probably) there - click again rather than wait longer
+                            break
+                        if burst_clicks >= self.MAX_CLICKS_PER_BURST:
+                            break  # force a fresh full-region scan instead of trusting a stale local match
+                        sleep_between_clicks()
+                        scan_tick()
+                        match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
+                    trigger_still_showing = match is not None
+                    self.log(f"Stopped clicking ({self.total_clicks} clicks this session).")
+                except Exception as e:
+                    log_error("Unexpected error", e)
+                    trigger_still_showing = False
+                    time.sleep(SCAN_INTERVAL)
         finally:
             executor.shutdown(wait=False)
             sct.close()

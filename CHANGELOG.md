@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wherever your mouse already is 200-400ms after it's found.").
 
 ### Fixed
+- **One unexpected error could silently stop all detection until restart.**
+  Only the screen-capture/matching step itself was protected; anything else
+  going wrong in the scan loop (e.g. a Windows display call failing during a
+  monitor sleep/wake or resolution change) ended the background scanner
+  while the status kept showing *Scanning*. It's now logged to the Activity
+  panel and scanning carries on. The periodic capture-engine refresh also
+  keeps the old one if creating the new one fails, instead of closing it
+  first and being left with none.
 - **Typing `nan` or `inf` into a delay field silently broke clicking.**
   Those pass as numbers, got saved, and then crashed the background clicker
   on its first wait - the status kept saying *Scanning* but nothing ever
