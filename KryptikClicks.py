@@ -599,13 +599,14 @@ def canvas_point_to_absolute(canvas_x, canvas_y, monitor):
     return (canvas_x + monitor["left"], canvas_y + monitor["top"])
 
 
-def run_capture_ui(parent=None, require_click_point=True, label_text=None):
+def run_capture_ui(parent=None, require_click_point=True, label_text=None, require_trigger=True):
     """Shows the capture overlay: drag-select the trigger image, then
     (if require_click_point) click the spot to auto-click. Pass require_click_point=False
     to skip that second step - used when the click position will be the live cursor
-    position instead of a captured point. Pass label_text to override the default
-    step-1 instructions (e.g. reusing this same drag-select flow for defining a
-    scan region instead of a trigger).
+    position instead of a captured point. Pass require_trigger=False to skip the
+    first step instead - Generic mode only needs the click point. Pass label_text to
+    override the default step-1 instructions (e.g. reusing this same drag-select
+    flow for defining a scan region instead of a trigger).
 
     On multi-monitor setups this shows one overlay window per physical monitor
     (each sized to just that monitor) rather than one giant window spanning
@@ -615,7 +616,8 @@ def run_capture_ui(parent=None, require_click_point=True, label_text=None):
     windows are normal-sized and render reliably, and the drag/click can
     start on whichever monitor the mouse is already on.
 
-    Returns (template_box, target_point, full_img), or (None, None, None) if cancelled.
+    Returns (template_box, target_point, full_img) - template_box is None when
+    require_trigger is False - or (None, None, None) if cancelled.
     Pass a Tkinter root as `parent` to run modally inside an existing app; omit for standalone use.
     """
     import tkinter as tk
@@ -638,9 +640,12 @@ def run_capture_ui(parent=None, require_click_point=True, label_text=None):
         "Drag a tight box around the trigger you want it to watch for, then release. Esc to cancel."
     )
 
+    if not require_trigger:
+        step1_text = "Click the spot you want it to auto-click. Esc to cancel."
+
     state = {
-        "phase": 1, "start": None, "start_mon": None, "rect": None, "rect_canvas": None,
-        "template_box": None, "target_point": None, "done": False,
+        "phase": 1 if require_trigger else 2, "start": None, "start_mon": None, "rect": None,
+        "rect_canvas": None, "template_box": None, "target_point": None, "done": False,
     }
     windows = []
     labels = []
@@ -748,17 +753,22 @@ def run_capture_ui(parent=None, require_click_point=True, label_text=None):
     else:
         parent.wait_window(controller)
 
-    if state["template_box"] is None:
+    captured = state["template_box"] if require_trigger else state["target_point"]
+    if captured is None:
         return None, None, None
     return state["template_box"], state["target_point"], full_img
+
+
+def save_click_point(target_point):
+    with open(TARGET_PATH, "w") as f:
+        f.write(f"{target_point[0]},{target_point[1]}\n")
 
 
 def save_capture(template_box, target_point, full_img):
     crop = full_img.crop(template_box)
     crop.save(TEMPLATE_PATH)
     if target_point is not None:
-        with open(TARGET_PATH, "w") as f:
-            f.write(f"{target_point[0]},{target_point[1]}\n")
+        save_click_point(target_point)
     return crop.width, crop.height
 
 
@@ -2147,8 +2157,13 @@ class KryptikClicksGUI:
         needs_template = mode == "targeted"
         needs_point = not cursor_position
 
-        capture_label = "Capture Trigger..." if needs_template and not needs_point else "Capture Trigger + Click Target..."
-        recapture_label = "Recapture Trigger..." if needs_template and not needs_point else "Recapture Trigger + Click Target..."
+        if not needs_template:
+            what = "Click Target"  # Generic: capture only ever sets the click point
+        elif needs_point:
+            what = "Trigger + Click Target"
+        else:
+            what = "Trigger"
+        capture_label, recapture_label = f"Capture {what}...", f"Recapture {what}..."
 
         if not needs_template and not needs_point:
             self.template_var.set("Cursor mode selected - no capture needed. It'll click wherever your mouse is.")
@@ -2230,17 +2245,27 @@ class KryptikClicksGUI:
         self.cfg["click_position"] = self.position_var.get()
         self.cfg["detection_method"] = self.detection_method_var.get()
         save_config(self.cfg)
-        require_point = self.position_var.get() != "cursor"
+        # Generic mode has no trigger - capture only the click point, and leave the
+        # saved Targeted trigger (template/color calibration) untouched.
+        capture_trigger = self.mode_var.get() == "targeted"
+        require_point = not capture_trigger or self.position_var.get() != "cursor"
         self.root.withdraw()
         try:
-            box, point, full_img = run_capture_ui(parent=self.root, require_click_point=require_point)
+            box, point, full_img = run_capture_ui(
+                parent=self.root, require_click_point=require_point, require_trigger=capture_trigger,
+            )
         finally:
             if not self._quitting:
                 self.root.deiconify()
         if self._quitting:
             return  # F9 during the overlay - the window is already gone
-        if box is None:
+        if box is None and point is None:
             self.log("Capture cancelled.")
+        elif not capture_trigger:
+            save_click_point(point)
+            self.detector.load()
+            self._refresh_template_label()
+            self.log(f"Captured new click target {point}.")
         else:
             save_capture(box, point, full_img)
             if self.cfg["detection_method"] == "color":

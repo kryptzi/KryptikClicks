@@ -262,3 +262,44 @@ def test_a_bad_value_in_a_hidden_field_does_not_block_saving_the_rest(kc, gui, m
     assert saved["min_delay_ms"] == 100.0
     assert saved["match_threshold"] == kc.DEFAULT_CONFIG["match_threshold"]  # hidden: kept as it was
     assert saved["trigger_delay_min_ms"] == 0
+
+
+def test_generic_mode_capture_only_sets_the_click_point_and_keeps_the_trigger(kc, make_gui, monkeypatch):
+    # Generic mode only needs a click point, but capture made you drag a "trigger" box
+    # first and saved it - overwriting the Targeted setup (e.g. the calibrated color).
+    from PIL import Image
+
+    Image.new("L", (30, 20), 77).save(kc.TEMPLATE_PATH)
+    kc.save_config({
+        "click_mode": "generic", "click_position": "fixed", "detection_method": "color",
+        "target_color": [102, 46, 143], "min_color_pixels": 7175,
+    })
+    with open(kc.TEMPLATE_PATH, "rb") as f:
+        template_before = f.read()
+    calls = []
+
+    def fake_overlay(**kwargs):
+        calls.append(kwargs)
+        return None, (50, 60), Image.new("RGB", (100, 100), (0, 200, 0))
+
+    monkeypatch.setattr(kc, "run_capture_ui", fake_overlay)
+    app = make_gui()
+    assert app.capture_var.get() == "Capture Click Target..."
+
+    app.on_capture()
+
+    assert calls[0]["require_trigger"] is False and calls[0]["require_click_point"] is True
+    assert app.cfg["target_color"] == [102, 46, 143] and app.cfg["min_color_pixels"] == 7175
+    with open(kc.TEMPLATE_PATH, "rb") as f:
+        assert f.read() == template_before
+    assert (app.detector.click_x, app.detector.click_y) == (50, 60)
+    assert app.capture_var.get() == "Recapture Click Target..."
+
+
+def test_targeted_capture_still_asks_for_the_trigger(kc, gui, monkeypatch):
+    calls = []
+    monkeypatch.setattr(kc, "run_capture_ui", lambda **kwargs: calls.append(kwargs) or (None, None, None))
+
+    gui.on_capture()
+
+    assert calls[0]["require_trigger"] is True
