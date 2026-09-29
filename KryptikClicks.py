@@ -1258,7 +1258,6 @@ class KryptikClicksGUI:
         self.messagebox = messagebox
 
         self.cfg = load_config()
-        self.detector = Detector(self.cfg, log=self.log)
 
         # Windows groups/identifies taskbar buttons by the *hosting* process
         # unless the process claims its own identity. Run from source, that
@@ -1277,6 +1276,9 @@ class KryptikClicksGUI:
                 pass  # cosmetic only - fine to fall back to default taskbar grouping
 
         self.root = tk.Tk()
+        # Only after the root exists: Detector.load() logs a warning for an unreadable
+        # capture file, and log() goes through self.root.
+        self.detector = Detector(self.cfg, log=self.log)
         self.root.title("KryptikClicks")
         self.root.configure(bg=self.COLORS["bg"])
         self.root.resizable(False, False)

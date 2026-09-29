@@ -113,3 +113,16 @@ def test_switching_generic_then_back_to_targeted_keeps_advanced_tab_order(gui):
 
     assert advanced_tab.pack_slaves() == before
     assert [gui.detection_frame.pack_info(), gui.scan_scope_frame.pack_info()] == layout_before
+
+
+def test_window_still_opens_when_a_saved_capture_file_is_unreadable(kc, make_gui):
+    # Detector.load() logs a warning for a corrupt capture, but the Detector was built
+    # before the Tk root existed, so log() -> self.root raised AttributeError and the
+    # app silently never opened (pythonw has no console) until the file was deleted.
+    with open(kc.TARGET_PATH, "w") as f:
+        f.write("")  # e.g. truncated by a crash mid-save
+
+    app = make_gui()
+    app.root.update()  # flush the root.after(0, ...) log calls
+
+    assert any("click_target.txt" in line for line in app.log_list.get(0, "end"))

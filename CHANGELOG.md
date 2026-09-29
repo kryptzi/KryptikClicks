@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wherever your mouse already is 200-400ms after it's found.").
 
 ### Fixed
+- **The app silently failed to open if a saved capture file was damaged**
+  (e.g. an empty `click_target.txt` after a crash mid-save). It tried to
+  log the "recapture needed" warning before its window existed and crashed
+  - invisibly, since the shortcut runs without a console. It now opens and
+  shows the warning in the Activity panel.
 - **Cursor + color mode could click dozens of times a second while the
   trigger simply stayed on screen.** After a click it waits for the trigger
   to disappear, but in color mode it only looked in a small box around the
