@@ -60,7 +60,8 @@ def test_load_config_rejects_malformed_target_color(kc):
 
 
 def test_load_config_accepts_valid_target_color(kc):
-    kc.save_config({"target_color": [118, 52, 171]})
+    # (with the pixel count every real capture saves alongside it)
+    kc.save_config({"target_color": [118, 52, 171], "min_color_pixels": 172})
     cfg = kc.load_config()
     assert cfg["target_color"] == [118, 52, 171]
 
@@ -289,3 +290,66 @@ def test_save_retries_when_the_file_is_briefly_locked(kc, monkeypatch):
 
     assert kc.load_config()["min_color_pixels"] == 42
     assert len(attempts) == 2
+
+
+@pytest.mark.parametrize("key, bad", [
+    ("color_tolerance", 400),            # > 255: every pixel "matches" -> clicks with no trigger
+    ("color_tolerance", float("inf")),
+    ("color_tolerance", float("nan")),   # nothing ever matches, silently
+    ("color_tolerance", True),
+    ("min_color_pixels", float("nan")),
+    ("min_color_pixels", float("inf")),
+    ("min_color_pixels", True),
+    ("click_limit", True),               # would mean "stop after 1 click"
+    ("click_limit", float("inf")),
+    ("click_limit", float("nan")),
+    ("match_threshold", float("nan")),
+])
+def test_load_config_rejects_non_finite_bool_or_out_of_range_numbers(kc, key, bad):
+    kc.save_config({key: bad})
+    assert kc.load_config()[key] == kc.DEFAULT_CONFIG[key]
+
+
+def test_load_config_keeps_a_loose_but_valid_color_tolerance(kc):
+    kc.save_config({"color_tolerance": 40.0})
+    assert kc.load_config()["color_tolerance"] == 40.0
+
+
+def test_load_config_rejects_bool_target_color_components(kc):
+    kc.save_config({"target_color": [True, False, True]})
+    assert kc.load_config()["target_color"] is None
+
+
+@pytest.mark.parametrize("bad_region", [
+    {"left": 4, "top": 25, "width": float("nan"), "height": 659},
+    {"left": 4, "top": 25, "width": True, "height": 659},
+    {"left": float("inf"), "top": 25, "width": 818, "height": 659},
+])
+def test_load_config_rejects_non_finite_or_bool_scan_region_values(kc, bad_region):
+    kc.save_config({"scan_region": bad_region})
+    assert kc.load_config()["scan_region"] is None
+
+
+def test_load_config_turns_whole_number_float_scan_region_values_into_ints(kc):
+    # The capture library rejects float coordinates outright, so "width": 818.0
+    # from a hand edit made every single scan fail.
+    kc.save_config({"scan_region": {"left": 4.0, "top": 25, "width": 818.0, "height": 659}})
+    region = kc.load_config()["scan_region"]
+    assert region == {"left": 4, "top": 25, "width": 818, "height": 659}
+    assert all(type(v) is int for v in region.values())
+
+
+@pytest.mark.parametrize("min_pixels", [None, "7175", -1, 0])
+def test_a_captured_color_without_a_usable_pixel_count_needs_recapturing(kc, min_pixels):
+    # A captured color is only half a calibration - without its pixel threshold the
+    # fallback of 0 would match on anything, so treat it as not captured at all.
+    saved = {"detection_method": "color", "target_color": [102, 46, 143]}
+    if min_pixels is not None:
+        saved["min_color_pixels"] = min_pixels
+    kc.save_config(saved)
+    warnings = []
+
+    cfg = kc.load_config(on_warning=warnings.append)
+
+    assert cfg["target_color"] is None
+    assert warnings and "recapture" in warnings[0].lower()

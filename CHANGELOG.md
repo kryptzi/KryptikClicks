@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wherever your mouse already is 200-400ms after it's found.").
 
 ### Fixed
+- **Hand-edited settings could quietly break color detection.** Only the
+  delay settings were checked properly; a `color_tolerance` of 400 or
+  `Infinity` made every pixel count as the trigger color (clicking with
+  nothing on screen), `NaN` silently disabled detection, and `true` was
+  accepted as a number (e.g. a repeat limit of 1). These now fall back to
+  their defaults, a whole-number scan region like `818.0` is accepted
+  instead of making every scan fail, and a saved color with no usable pixel
+  count is treated as not captured (with a "recapture it" warning) rather
+  than matching anything.
 - **A settings file it couldn't read was silently replaced with defaults.**
   One stray comma from a hand edit, a file saved with a BOM (PowerShell
   5.1's `Set-Content -Encoding utf8` adds one), or a half-written file made

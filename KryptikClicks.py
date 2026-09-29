@@ -150,7 +150,7 @@ def load_config(on_warning=None):
         cfg["click_mode"] = DEFAULT_CONFIG["click_mode"]
     if cfg.get("click_position") not in CLICK_POSITIONS:
         cfg["click_position"] = DEFAULT_CONFIG["click_position"]
-    if not isinstance(cfg.get("click_limit"), (int, float)) or cfg["click_limit"] < 0:
+    if not is_finite_number(cfg.get("click_limit")) or cfg["click_limit"] < 0:
         cfg["click_limit"] = DEFAULT_CONFIG["click_limit"]
     if not isinstance(cfg.get("sound_enabled"), bool):
         cfg["sound_enabled"] = DEFAULT_CONFIG["sound_enabled"]
@@ -166,31 +166,40 @@ def load_config(on_warning=None):
     if target_color is not None and (
         not isinstance(target_color, (list, tuple))
         or len(target_color) != 3
-        or not all(isinstance(v, (int, float)) and 0 <= v <= 255 for v in target_color)
+        or not all(is_finite_number(v) and 0 <= v <= 255 for v in target_color)
     ):
         cfg["target_color"] = DEFAULT_CONFIG["target_color"]
-    if not isinstance(cfg.get("color_tolerance"), (int, float)) or cfg["color_tolerance"] < 0:
+    # Past 255 every pixel is within tolerance of any color (clicks with no trigger).
+    tolerance = cfg.get("color_tolerance")
+    if not is_finite_number(tolerance) or not 0 <= tolerance <= 255:
         cfg["color_tolerance"] = DEFAULT_CONFIG["color_tolerance"]
-    if not isinstance(cfg.get("min_color_pixels"), (int, float)) or cfg["min_color_pixels"] < 0:
+    if not is_finite_number(cfg.get("min_color_pixels")) or cfg["min_color_pixels"] < 0:
         cfg["min_color_pixels"] = DEFAULT_CONFIG["min_color_pixels"]
+    if cfg["target_color"] is not None and cfg["min_color_pixels"] < 1:
+        # A captured color is only half a calibration: with no usable pixel threshold
+        # it would match anything, so treat it as not captured.
+        cfg["target_color"] = None
+        if on_warning is not None and cfg["detection_method"] == "color":
+            on_warning("The saved color trigger has no valid pixel count - recapture it.")
     scan_region = cfg.get("scan_region")
-    if scan_region is not None and (
-        not isinstance(scan_region, dict)
-        or set(scan_region.keys()) != {"left", "top", "width", "height"}
-        or not all(isinstance(v, (int, float)) for v in scan_region.values())
-        or scan_region["width"] <= 0
-        or scan_region["height"] <= 0
-    ):
-        cfg["scan_region"] = DEFAULT_CONFIG["scan_region"]
+    if scan_region is not None:
+        if (
+            not isinstance(scan_region, dict)
+            or set(scan_region.keys()) != {"left", "top", "width", "height"}
+            or not all(is_finite_number(v) for v in scan_region.values())
+            or scan_region["width"] < 1
+            or scan_region["height"] < 1
+        ):
+            cfg["scan_region"] = DEFAULT_CONFIG["scan_region"]
+        else:
+            # The capture library rejects float coordinates outright.
+            cfg["scan_region"] = {k: int(v) for k, v in scan_region.items()}
 
-    def is_number(v):
-        return isinstance(v, (int, float)) and not isinstance(v, bool)
-
-    thr = cfg.get("match_threshold")
     if not is_valid_delay_range(cfg.get("min_delay_ms"), cfg.get("max_delay_ms")):
         cfg["min_delay_ms"] = DEFAULT_CONFIG["min_delay_ms"]
         cfg["max_delay_ms"] = DEFAULT_CONFIG["max_delay_ms"]
-    if not is_number(thr) or not (0.0 < thr <= 1.0):
+    thr = cfg.get("match_threshold")
+    if not is_finite_number(thr) or not (0.0 < thr <= 1.0):
         cfg["match_threshold"] = DEFAULT_CONFIG["match_threshold"]
     if not is_valid_delay_range(cfg.get("trigger_delay_min_ms"), cfg.get("trigger_delay_max_ms")):
         cfg["trigger_delay_min_ms"] = DEFAULT_CONFIG["trigger_delay_min_ms"]
@@ -198,15 +207,19 @@ def load_config(on_warning=None):
     return cfg
 
 
+def is_finite_number(v):
+    """A real, finite number. Excludes bools (True passes isinstance(v, int)) and
+    NaN/inf, which slip through naive range checks since every comparison with NaN
+    is False - and json happily loads NaN/Infinity from a config file."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def is_valid_delay_range(min_ms, max_ms):
     """True if (min_ms, max_ms) is safe to feed time.sleep(random.uniform(...)):
-    real finite numbers (not bools) with 0 <= min <= max <= MAX_DELAY_MS. NaN/inf
-    pass naive `< 0` / `max < min` checks but make time.sleep raise on the worker
-    thread, killing detection while the UI still says Scanning."""
-    def ok(v):
-        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
-
-    return ok(min_ms) and ok(max_ms) and 0 <= min_ms <= max_ms <= MAX_DELAY_MS
+    finite numbers with 0 <= min <= max <= MAX_DELAY_MS. NaN/inf would make
+    time.sleep raise on the worker thread, killing detection while the UI still
+    says Scanning."""
+    return is_finite_number(min_ms) and is_finite_number(max_ms) and 0 <= min_ms <= max_ms <= MAX_DELAY_MS
 
 
 def save_config(cfg):
