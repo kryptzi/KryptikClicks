@@ -33,7 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   your captured color, window and region were then overwritten for good. It
   now reads BOM files fine, keeps an unreadable file as
   `kryptikclicks_config.json.unreadable-<date-time>`, and tells you so (in
-  the Activity panel and a pop-up). Settings are now saved as UTF-8.
+  the Activity panel and a pop-up). Settings are now saved as UTF-8, and
+  written to a temporary file first and then swapped in, so a crash or
+  power cut mid-save can no longer leave a half-written settings file.
 - **Choosing a different window kept scanning the old one** as long as the
   old one stayed open (e.g. two RuneLite clients), even across Pause/Start.
   It now switches as soon as you pick the new window. (It still keeps

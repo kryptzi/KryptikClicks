@@ -249,3 +249,43 @@ def test_non_ascii_window_titles_round_trip_through_the_config_file(kc):
     with open(kc.CONFIG_PATH, "rb") as f:
         f.read().decode("utf-8")  # readable by any tool, whatever the Windows locale
     assert kc.load_config()["scan_window_title"] == "RuneLite - José"
+
+
+def test_a_save_that_dies_midway_leaves_the_previous_config_intact(kc, monkeypatch):
+    # open(path, "w") truncates immediately, so a crash/kill during json.dump used to
+    # leave a half-written (or empty) config behind.
+    kc.save_config({"target_color": [102, 46, 143], "min_color_pixels": 7175})
+
+    def dying_dump(obj, f, **kwargs):
+        f.write('{"target_col')
+        raise OSError("process killed mid-write")
+
+    # A nested context, NOT monkeypatch.undo(): that would also undo the kc fixture's
+    # redirect of CONFIG_PATH and point the rest of the test at the real config file.
+    with monkeypatch.context() as m:
+        m.setattr(kc.json, "dump", dying_dump)
+        with pytest.raises(OSError):
+            kc.save_config({"target_color": [1, 2, 3]})
+
+    assert kc.load_config()["target_color"] == [102, 46, 143]
+    assert not os.path.exists(kc.CONFIG_PATH + ".tmp")
+
+
+def test_save_retries_when_the_file_is_briefly_locked(kc, monkeypatch):
+    # On Windows an antivirus/indexer can hold the file for a moment, making the
+    # swap-in fail with PermissionError.
+    real_replace = os.replace
+    attempts = []
+
+    def locked_once(src, dst):
+        attempts.append(dst)
+        if len(attempts) == 1:
+            raise PermissionError("in use by another process")
+        return real_replace(src, dst)
+
+    with monkeypatch.context() as m:
+        m.setattr(kc.os, "replace", locked_once)
+        kc.save_config({"min_color_pixels": 42})
+
+    assert kc.load_config()["min_color_pixels"] == 42
+    assert len(attempts) == 2

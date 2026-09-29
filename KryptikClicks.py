@@ -210,8 +210,30 @@ def is_valid_delay_range(min_ms, max_ms):
 
 
 def save_config(cfg):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
+    """Writes to a temp file and swaps it into place, so a crash or kill mid-write
+    can't leave a truncated config behind (open("w") empties the file at once)."""
+    tmp = CONFIG_PATH + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        # Antivirus/indexers can hold the file for a moment on Windows, making the
+        # swap fail with PermissionError - retry briefly before giving up.
+        for attempt in range(5):
+            try:
+                os.replace(tmp, CONFIG_PATH)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/kryptzi/KryptikClicks/releases/latest"
