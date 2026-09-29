@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   captured frame.
 
 ### Fixed
+- **An unexpected update-check response could leave "Checking for
+  updates..." showing forever** (e.g. a release tagged like `v1.7.0-beta`).
+  Anything that isn't a plain newer version with a downloadable `.exe` now
+  simply counts as "no update", and a failed check says so.
 - **Setting a click point in Generic mode overwrote your Targeted trigger.**
   Capture always made you drag a "trigger" box first and saved it - replacing
   the saved image, or re-calibrating the saved color to whatever you dragged

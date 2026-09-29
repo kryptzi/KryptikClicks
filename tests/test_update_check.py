@@ -66,3 +66,20 @@ def test_check_for_update_returns_update_info_when_fetch_succeeds_with_newer_rel
     }
     result = kc.check_for_update("1.3.4", fetcher=lambda: release)
     assert result["version"] == "v1.3.5"
+
+
+@pytest.mark.parametrize("release", [
+    {"tag_name": "v1.7.0-beta", "assets": [{"name": "KryptikClicks.exe", "browser_download_url": "https://x"}]},
+    {"tag_name": "release-1.7", "assets": []},
+    {"tag_name": 17, "assets": []},
+    {"tag_name": "v9.9.9", "assets": None},
+    {"tag_name": "v9.9.9", "assets": ["KryptikClicks.exe"]},
+    {"tag_name": "v9.9.9", "assets": [{"name": "KryptikClicks.exe"}]},  # no download URL
+    ["not", "a", "dict"],
+    None,
+])
+def test_a_malformed_release_response_is_just_no_update(kc, release):
+    # This is a network response - it used to raise inside the update-check thread,
+    # which then never reported back, leaving "Checking for updates..." up for good.
+    assert kc.check_for_update("1.6.2", fetcher=lambda: release) is None
+

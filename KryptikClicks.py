@@ -268,18 +268,29 @@ def is_newer_version(remote, local):
 def find_update(release, current_version):
     """Given a GitHub 'latest release' API response dict, returns
     {"version", "download_url", "notes"} if it's newer than current_version and has a
-    downloadable .exe asset, else None."""
-    tag = release.get("tag_name")
-    if not tag or not is_newer_version(tag, current_version):
+    downloadable .exe asset, else None. It's a network response, so anything not
+    shaped as expected (including a tag that isn't plain X.Y.Z) counts as no update."""
+    if not isinstance(release, dict):
         return None
-    for asset in release.get("assets", []):
-        name = asset.get("name", "")
-        if name.lower().endswith(".exe"):
-            return {
-                "version": tag,
-                "download_url": asset.get("browser_download_url"),
-                "notes": release.get("body", ""),
-            }
+    tag = release.get("tag_name")
+    if not isinstance(tag, str) or not tag:
+        return None
+    try:
+        if not is_newer_version(tag, current_version):
+            return None
+    except ValueError:
+        return None
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        return None
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = asset.get("name")
+        url = asset.get("browser_download_url")
+        if isinstance(name, str) and name.lower().endswith(".exe") and isinstance(url, str) and url:
+            notes = release.get("body")
+            return {"version": tag, "download_url": url, "notes": notes if isinstance(notes, str) else ""}
     return None
 
 
@@ -2353,12 +2364,19 @@ class KryptikClicksGUI:
 
     def _run_update_check(self, silent):
         def worker():
-            update = check_for_update(__version__)
-            self.root.after(0, lambda: self._on_update_check_done(update, silent))
+            # Always report back - otherwise "Checking for updates..." stays up forever.
+            try:
+                update, failed = check_for_update(__version__), False
+            except Exception:
+                update, failed = None, True
+            self.root.after(0, lambda: self._on_update_check_done(update, silent, failed))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_update_check_done(self, update, silent):
+    def _on_update_check_done(self, update, silent, failed=False):
+        if failed:
+            self.update_status_label.config(text="" if silent else "Couldn't check for updates.")
+            return
         if update is None:
             self.update_status_label.config(text="" if silent else "You're up to date.")
             return
