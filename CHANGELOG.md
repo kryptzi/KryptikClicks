@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The Simple tab's summary sentence now includes it (e.g. "...clicking
     wherever your mouse already is 200-400ms after it's found.").
 
+### Changed
+- **Color detection is ~11x faster** (7.6ms -> 0.7ms per scan of an
+  818x659 area, 28ms -> 2.3ms for a full 1080p monitor, measured on real
+  screen captures), with bit-for-bit identical results. That means less CPU
+  taken from the game and a trigger noticed a few ms sooner on each scan.
+  Both detection methods also stopped making a needless copy of every
+  captured frame.
+
 ### Fixed
 - **Capturing a color calibrated its pixel threshold at the wrong
   tolerance.** The minimum pixel count is set to half the matching pixels in

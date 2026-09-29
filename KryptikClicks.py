@@ -314,6 +314,39 @@ def count_color_pixels(rgb_array, target_color, tolerance):
     return np.all(diff <= tolerance, axis=-1)
 
 
+def color_match_bgra(frame, target_color, tolerance):
+    """Counts the pixels of a BGRA frame within `tolerance` (per channel) of the RGB
+    target_color. Returns (count, cx, cy) - cx/cy being the truncated mean position
+    of those pixels - or (0, 0, 0) if there are none.
+
+    Gives exactly what count_color_pixels() on the RGB channels plus a numpy
+    nonzero().mean() gives (the scan loop's original implementation), in one
+    cv2.inRange pass instead of ~6 full-frame numpy passes and copies: measured
+    ~10x faster on an 818x659 region, i.e. less CPU taken from the game."""
+    import cv2
+    import numpy as np
+
+    if tolerance != tolerance:  # NaN: `diff <= nan` never matches
+        return 0, 0, 0
+    # Same float->int truncation the int16 numpy version applies to the target, and
+    # for integer pixel differences |d| <= tol is exactly |d| <= floor(tol).
+    r, g, b = (int(v) for v in np.array(target_color, dtype=np.int16))
+    k = 255 if tolerance >= 255 else math.floor(tolerance)
+    lower = (max(b - k, 0), max(g - k, 0), max(r - k, 0), 0)
+    upper = (min(b + k, 255), min(g + k, 255), min(r + k, 255), 255)
+    mask = cv2.inRange(frame, lower, upper)
+    count = cv2.countNonZero(mask)
+    if count == 0:
+        return 0, 0, 0
+    # Centroid from per-column/row counts: exact integer sums, then the same single
+    # division numpy's mean does - so truncation can't come out differently.
+    cols = cv2.reduce(mask, 0, cv2.REDUCE_SUM, dtype=cv2.CV_32S).ravel() // 255
+    rows = cv2.reduce(mask, 1, cv2.REDUCE_SUM, dtype=cv2.CV_32S).ravel() // 255
+    sum_x = int(np.dot(cols.astype(np.int64), np.arange(cols.size, dtype=np.int64)))
+    sum_y = int(np.dot(rows.astype(np.int64), np.arange(rows.size, dtype=np.int64)))
+    return count, int(sum_x / count), int(sum_y / count)
+
+
 def analyze_color_trigger(crop_img, tolerance=None):
     """Given a PIL image crop of the drag-selected trigger, extracts the
     dominant non-background (distinctly colored, not-too-dark) color and how
@@ -911,7 +944,7 @@ class Detector:
     def _template_match_score_in(self, sct, region):
         shot = sct.grab(region)
         import numpy as np
-        frame = np.array(shot)  # BGRA
+        frame = np.asarray(shot)  # BGRA, a zero-copy view of the grab's own buffer
         gray = self.cv2.cvtColor(frame, self.cv2.COLOR_BGRA2GRAY)
         result = self.cv2.matchTemplate(gray, self.template, self.cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = self.cv2.minMaxLoc(result)
@@ -926,18 +959,13 @@ class Detector:
         the way template correlation can be."""
         shot = sct.grab(region)
         import numpy as np
-        frame = np.array(shot)  # BGRA
-        rgb = frame[:, :, [2, 1, 0]]
-        mask = count_color_pixels(
-            rgb, self.cfg["target_color"], self.cfg.get("color_tolerance", DEFAULT_CONFIG["color_tolerance"])
+        frame = np.asarray(shot)  # BGRA, a zero-copy view of the grab's own buffer
+        count, cx, cy = color_match_bgra(
+            frame, self.cfg["target_color"], self.cfg.get("color_tolerance", DEFAULT_CONFIG["color_tolerance"])
         )
-        count = int(mask.sum())
         if count == 0:
             return region["left"], region["top"], 0
-        ys, xs = np.nonzero(mask)
-        x = region["left"] + int(xs.mean())
-        y = region["top"] + int(ys.mean())
-        return x, y, count
+        return region["left"] + cx, region["top"] + cy, count
 
     def _score_threshold(self):
         if self.cfg.get("detection_method") == "color":
