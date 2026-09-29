@@ -97,14 +97,53 @@ def check_dependencies():
         sys.exit(1)
 
 
-def load_config():
+def read_config_file(path):
+    """Parses the config file, which must hold a JSON object. Accepts a UTF-8 BOM
+    (PowerShell 5.1's Set-Content/Out-File add one) and, for files written by older
+    versions or hand-edited in the Windows locale encoding, falls back to that.
+    Raises OSError/ValueError if it can't be read."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        import locale
+
+        text = raw.decode(locale.getpreferredencoding(False))
+    loaded = json.loads(text)
+    if not isinstance(loaded, dict):
+        raise ValueError("it doesn't contain a JSON object")
+    return loaded
+
+
+def set_aside_unreadable_config():
+    """Copies the current config file next to itself with a timestamped name, so
+    the defaults the app falls back to (and saves over it) can't destroy the
+    user's settings. Returns the copy's path, or None if it couldn't be made."""
+    import shutil
+
+    backup = f"{CONFIG_PATH}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        shutil.copy2(CONFIG_PATH, backup)
+        return backup
+    except OSError:
+        return None
+
+
+def load_config(on_warning=None):
+    """Loads and validates the config file over DEFAULT_CONFIG. If the file exists
+    but can't be read, it's set aside and on_warning(message) is told why."""
     cfg = dict(DEFAULT_CONFIG)
     if os.path.exists(CONFIG_PATH):
         try:
-            with open(CONFIG_PATH) as f:
-                cfg.update(json.load(f))
-        except (OSError, ValueError):
-            pass
+            cfg.update(read_config_file(CONFIG_PATH))
+        except (OSError, ValueError) as e:
+            backup = set_aside_unreadable_config()
+            if on_warning is not None:
+                kept = (f"Your old file was kept as {os.path.basename(backup)}." if backup
+                        else "Couldn't keep a copy of the old file.")
+                on_warning(f"Couldn't read {os.path.basename(CONFIG_PATH)} ({e}), so the default "
+                           f"settings are in use. {kept}")
     if cfg.get("click_button") not in CLICK_BUTTONS:
         cfg["click_button"] = DEFAULT_CONFIG["click_button"]
     if cfg.get("click_mode") not in CLICK_MODES:
@@ -171,7 +210,7 @@ def is_valid_delay_range(min_ms, max_ms):
 
 
 def save_config(cfg):
-    with open(CONFIG_PATH, "w") as f:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
 
 
@@ -1205,7 +1244,7 @@ class HotkeyListener:
 def run_headless():
     from pynput import keyboard as pynkeyboard
 
-    detector = Detector(load_config())
+    detector = Detector(load_config(on_warning=print))
     if not detector.ready:
         print("No template/click-target found.")
         print("Run with --capture first: python KryptikClicks.py --capture")
@@ -1268,7 +1307,8 @@ class KryptikClicksGUI:
         self.tk = tk
         self.messagebox = messagebox
 
-        self.cfg = load_config()
+        startup_warnings = []
+        self.cfg = load_config(on_warning=startup_warnings.append)
 
         # Windows groups/identifies taskbar buttons by the *hosting* process
         # unless the process claims its own identity. Run from source, that
@@ -1314,6 +1354,9 @@ class KryptikClicksGUI:
         self._build_ui(tk, ttk)
         self._refresh_template_label()
         self._refresh_status()
+        for warning in startup_warnings:
+            self.log(warning)
+            self.root.after(0, lambda w=warning: self.messagebox.showwarning("KryptikClicks - settings", w))
 
         # Global hotkeys (F6/F9) work even while another window has focus.
         # Fired on the pynput listener thread - dispatch marshals the action onto the GUI thread.

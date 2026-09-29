@@ -126,3 +126,17 @@ def test_window_still_opens_when_a_saved_capture_file_is_unreadable(kc, make_gui
     app.root.update()  # flush the root.after(0, ...) log calls
 
     assert any("click_target.txt" in line for line in app.log_list.get(0, "end"))
+
+
+def test_an_unreadable_config_is_reported_when_the_window_opens(kc, make_gui, monkeypatch):
+    with open(kc.CONFIG_PATH, "w", encoding="utf-8") as f:
+        f.write('{"detection_method": "color",}')  # stray comma
+    shown = []
+    from tkinter import messagebox
+    monkeypatch.setattr(messagebox, "showwarning", lambda title, msg, **kw: shown.append(msg))
+
+    app = make_gui()
+    app.root.update()
+
+    assert shown and ".unreadable-" in shown[0]
+    assert any("default settings" in line for line in app.log_list.get(0, "end"))

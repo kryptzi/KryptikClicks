@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 
@@ -185,3 +187,65 @@ def test_load_config_keeps_a_long_generic_click_interval(kc):
     kc.save_config({"min_delay_ms": 240000, "max_delay_ms": 300000})
     cfg = kc.load_config()
     assert (cfg["min_delay_ms"], cfg["max_delay_ms"]) == (240000, 300000)
+
+
+OWNER_LIKE_CONFIG = (
+    '{"detection_method": "color", "target_color": [102, 46, 143], '
+    '"min_color_pixels": 7175, "scan_scope": "window", "scan_window_title": "RuneLite - ItzKryptik"}'
+)
+
+
+def _backups(kc):
+    folder = os.path.dirname(kc.CONFIG_PATH)
+    name = os.path.basename(kc.CONFIG_PATH)
+    return [os.path.join(folder, f) for f in os.listdir(folder) if f.startswith(name + ".unreadable")]
+
+
+@pytest.mark.parametrize("broken", [
+    OWNER_LIKE_CONFIG[:-1] + ',}',  # one stray comma from a hand edit
+    OWNER_LIKE_CONFIG[:40],         # truncated mid-write
+    "null",
+    "42",
+    "[1, 2]",
+])
+def test_unreadable_config_is_set_aside_with_a_warning_not_silently_lost(kc, broken):
+    # It used to fall back to defaults silently - and the GUI saves on startup, so the
+    # user's calibration was overwritten for good. Keep a copy and say what happened.
+    with open(kc.CONFIG_PATH, "w", encoding="utf-8") as f:
+        f.write(broken)
+    warnings = []
+
+    cfg = kc.load_config(on_warning=warnings.append)
+
+    assert cfg["detection_method"] == kc.DEFAULT_CONFIG["detection_method"]
+    backups = _backups(kc)
+    assert len(backups) == 1
+    with open(backups[0], encoding="utf-8") as f:
+        assert f.read() == broken
+    assert warnings and os.path.basename(backups[0]) in warnings[0]
+
+
+def test_config_saved_with_a_utf8_bom_loads(kc):
+    # PowerShell 5.1's Set-Content -Encoding utf8 / Out-File write a BOM.
+    with open(kc.CONFIG_PATH, "w", encoding="utf-8-sig") as f:
+        f.write(OWNER_LIKE_CONFIG)
+    cfg = kc.load_config()
+    assert cfg["target_color"] == [102, 46, 143]
+    assert _backups(kc) == []
+
+
+def test_config_written_by_older_versions_in_the_locale_encoding_still_loads(kc):
+    import locale
+
+    legacy = '{"scan_window_title": "RuneLite - José"}'.encode(locale.getpreferredencoding(False))
+    with open(kc.CONFIG_PATH, "wb") as f:
+        f.write(legacy)
+    cfg = kc.load_config()
+    assert cfg["scan_window_title"] == "RuneLite - José"
+
+
+def test_non_ascii_window_titles_round_trip_through_the_config_file(kc):
+    kc.save_config({"scan_window_title": "RuneLite - José"})
+    with open(kc.CONFIG_PATH, "rb") as f:
+        f.read().decode("utf-8")  # readable by any tool, whatever the Windows locale
+    assert kc.load_config()["scan_window_title"] == "RuneLite - José"
