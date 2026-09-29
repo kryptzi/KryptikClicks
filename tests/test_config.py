@@ -227,7 +227,7 @@ def test_unreadable_config_is_set_aside_with_a_warning_not_silently_lost(kc, bro
 
 
 def test_config_saved_with_a_utf8_bom_loads(kc):
-    # PowerShell 5.1's Set-Content -Encoding utf8 / Out-File write a BOM.
+    # PowerShell 5.1's Set-Content/Out-File -Encoding utf8 write a UTF-8 BOM.
     with open(kc.CONFIG_PATH, "w", encoding="utf-8-sig") as f:
         f.write(OWNER_LIKE_CONFIG)
     cfg = kc.load_config()
@@ -235,20 +235,28 @@ def test_config_saved_with_a_utf8_bom_loads(kc):
     assert _backups(kc) == []
 
 
-def test_config_written_by_older_versions_in_the_locale_encoding_still_loads(kc):
+def test_config_saved_as_utf16_loads(kc):
+    # PowerShell 5.1's default for `>` and Out-File is UTF-16 LE with a BOM.
+    with open(kc.CONFIG_PATH, "w", encoding="utf-16") as f:
+        f.write(OWNER_LIKE_CONFIG)
+    cfg = kc.load_config()
+    assert cfg["target_color"] == [102, 46, 143]
+    assert _backups(kc) == []
+
+
+def test_a_config_hand_edited_in_the_windows_locale_encoding_still_loads(kc):
+    # e.g. saved as "ANSI" by an editor after typing a non-ASCII window title.
     import locale
 
-    legacy = '{"scan_window_title": "RuneLite - José"}'.encode(locale.getpreferredencoding(False))
+    ansi = '{"scan_window_title": "RuneLite - José"}'.encode(locale.getpreferredencoding(False))
     with open(kc.CONFIG_PATH, "wb") as f:
-        f.write(legacy)
+        f.write(ansi)
     cfg = kc.load_config()
     assert cfg["scan_window_title"] == "RuneLite - José"
 
 
 def test_non_ascii_window_titles_round_trip_through_the_config_file(kc):
     kc.save_config({"scan_window_title": "RuneLite - José"})
-    with open(kc.CONFIG_PATH, "rb") as f:
-        f.read().decode("utf-8")  # readable by any tool, whatever the Windows locale
     assert kc.load_config()["scan_window_title"] == "RuneLite - José"
 
 

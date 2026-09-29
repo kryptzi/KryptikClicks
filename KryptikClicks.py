@@ -121,9 +121,10 @@ def check_dependencies():
 
 
 def read_config_file(path):
-    """Parses the config file, which must hold a JSON object. Accepts a UTF-8 BOM
-    (PowerShell 5.1's Set-Content/Out-File add one) and, for files written by older
-    versions or hand-edited in the Windows locale encoding, falls back to that.
+    """Parses the config file, which must hold a JSON object. The app writes plain
+    ASCII, but a hand edit may not: accepts UTF-16 with a BOM (PowerShell 5.1's
+    default for `>` and Out-File), UTF-8 with or without a BOM (-Encoding utf8 adds
+    one), and otherwise falls back to the Windows locale encoding ("ANSI" editors).
     Raises OSError/ValueError if it can't be read."""
     # Antivirus/backup/sync tools can hold the file without read sharing for a
     # moment - retry briefly rather than treat a readable config as unreadable.
@@ -137,7 +138,10 @@ def read_config_file(path):
                 raise
             time.sleep(0.05)
     try:
-        text = raw.decode("utf-8-sig")
+        if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+            text = raw.decode("utf-16")  # the BOM says which byte order
+        else:
+            text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         import locale
 

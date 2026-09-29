@@ -90,17 +90,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count is treated as not captured (with a "recapture it" warning) rather
   than matching anything.
 - **A settings file it couldn't read was silently replaced with defaults.**
-  One stray comma from a hand edit, a file saved with a BOM (PowerShell
-  5.1's `Set-Content -Encoding utf8` adds one), or a half-written file made
+  One stray comma from a hand edit, a file re-saved by PowerShell 5.1 (which
+  writes UTF-16, or UTF-8 with a BOM), or a half-written file made
   it quietly start from default settings - and since it saves on startup,
   your captured color, window and region were then overwritten for good. It
-  now reads BOM files fine, keeps an unreadable file as
+  now reads those encodings fine, keeps an unreadable file as
   `kryptikclicks_config.json.unreadable-<date-time>`, and tells you so (in
   the Activity panel and a pop-up). A file that's only briefly locked by
   another program (antivirus, backup, sync) is simply read once it's free,
   and one that can be neither read nor copied is left untouched for that
-  session instead of being replaced. Settings are now saved as UTF-8, and
-  written to a temporary file first and then swapped in, so a crash or
+  session instead of being replaced. Settings are also written to a
+  temporary file first and then swapped in, so a crash or
   power cut mid-save can no longer leave a half-written settings file.
 - **Choosing a different window kept scanning the old one** as long as the
   old one stayed open (e.g. two RuneLite clients), even across Pause/Start.
