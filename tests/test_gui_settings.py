@@ -157,3 +157,49 @@ def test_color_capture_calibrates_at_the_configured_tolerance(kc, make_gui, monk
 
     # 4 pixels match at tolerance 40 -> threshold 2; counting at 20 would give 3 -> 1.
     assert app.cfg["min_color_pixels"] == 2
+
+
+def _ready_and_scanning(kc, app):
+    app.cfg.update(click_mode="generic", click_position="cursor")  # ready with no capture
+    app.detector.start_scanning()
+    assert app.detector.scanning_active.is_set()
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_limit_to_region_pauses_clicking_while_the_overlay_is_up(kc, gui, monkeypatch, cancelled):
+    # The region picker is a frozen full-screen snapshot: the worker kept "seeing" the
+    # trigger in it and clicking wherever the mouse was - i.e. mid-drag.
+    from PIL import Image
+
+    _ready_and_scanning(kc, gui)
+    gui.scan_window_title_var.set("RuneLite")
+    monkeypatch.setattr(kc, "list_visible_windows", lambda exclude_hwnd=None: [(7, "RuneLite")])
+    monkeypatch.setattr(kc, "get_window_rect", lambda hwnd: {"left": 0, "top": 0, "width": 800, "height": 600})
+    seen_during = []
+
+    def fake_overlay(**kwargs):
+        seen_during.append(gui.detector.scanning_active.is_set())
+        if cancelled:
+            return None, None, None
+        return (10, 10, 110, 60), None, Image.new("RGB", (800, 600))
+
+    monkeypatch.setattr(kc, "run_capture_ui", fake_overlay)
+
+    gui.on_define_scan_region()
+
+    assert seen_during == [False]
+    assert gui.detector.scanning_active.is_set()  # resumed afterwards, even on Esc
+
+
+def test_choose_window_picker_pauses_clicking_until_it_closes(kc, gui, monkeypatch):
+    # In cursor mode a detection would click wherever the mouse is - i.e. on the picker.
+    monkeypatch.setattr(kc, "list_visible_windows", lambda exclude_hwnd=None: [])
+    _ready_and_scanning(kc, gui)
+
+    gui.on_choose_window()
+    picker = [w for w in gui.root.winfo_children() if w.winfo_class() == "Toplevel"][-1]
+    assert not gui.detector.scanning_active.is_set()
+
+    picker.destroy()
+    gui.root.update()
+    assert gui.detector.scanning_active.is_set()

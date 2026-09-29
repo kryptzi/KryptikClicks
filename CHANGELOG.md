@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   captured frame.
 
 ### Fixed
+- **Clicking carried on underneath *Limit to Region...* and *Choose
+  Window...*.** The region overlay is a frozen snapshot that can still show
+  the trigger, so it kept clicking - in cursor mode, right where you were
+  dragging or picking. Both now pause clicking while open and resume
+  afterwards (including after Esc/Cancel), like capturing a trigger already
+  did.
 - **Capturing a color calibrated its pixel threshold at the wrong
   tolerance.** The minimum pixel count is set to half the matching pixels in
   your capture, but those were always counted at the default tolerance (20)

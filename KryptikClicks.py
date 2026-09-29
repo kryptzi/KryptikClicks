@@ -1954,6 +1954,10 @@ class KryptikClicksGUI:
             return
         window_rect = get_window_rect(hwnd)
 
+        # Pause like on_capture does: the overlay is a frozen snapshot that can still
+        # show the trigger, and clicking would land mid-drag.
+        was_scanning = self.detector.scanning_active.is_set()
+        self.detector.pause_scanning()
         self.root.withdraw()
         try:
             box, _, full_img = run_capture_ui(
@@ -1963,6 +1967,8 @@ class KryptikClicksGUI:
             )
         finally:
             self.root.deiconify()
+            if was_scanning and self.detector.ready:
+                self.detector.start_scanning()
         if box is None:
             self.log("Scan region selection cancelled.")
             return
@@ -2002,6 +2008,17 @@ class KryptikClicksGUI:
         picker.transient(self.root)
         picker.grab_set()
         self._enable_dark_titlebar(picker)
+
+        # No clicking while picking (cursor mode would click on the picker itself);
+        # resume once it closes, however it closes.
+        was_scanning = self.detector.scanning_active.is_set()
+        self.detector.pause_scanning()
+
+        def on_picker_closed(event):
+            if event.widget is picker and was_scanning and self.detector.ready:
+                self.detector.start_scanning()
+
+        picker.bind("<Destroy>", on_picker_closed)
 
         canvas = tk.Canvas(picker, bg=c["bg"], highlightthickness=0, width=560, height=420)
         scrollbar = ttk.Scrollbar(picker, orient="vertical", command=canvas.yview)
