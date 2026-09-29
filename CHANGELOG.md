@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   taken from the game and a trigger noticed a few ms sooner on each scan.
   Both detection methods also stopped making a needless copy of every
   captured frame.
+- **The clicker no longer waits on the window.** Activity-log messages from
+  the background scanner, F6/F9, and the update check are now handed to the
+  window through a queue instead of calling into it directly - which made
+  the scanner wait (e.g. up to ~0.6s before a click, measured) whenever the
+  window was busy, such as while *Choose Window...* builds its previews.
 
 ### Fixed
 - **An unexpected update-check response could leave "Checking for

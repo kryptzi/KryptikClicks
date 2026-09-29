@@ -303,3 +303,62 @@ def test_targeted_capture_still_asks_for_the_trigger(kc, gui, monkeypatch):
     gui.on_capture()
 
     assert calls[0]["require_trigger"] is True
+
+
+def _pump_until(app, condition, timeout=2.0):
+    import time
+
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        app.root.update()
+        time.sleep(0.01)
+    return condition()
+
+
+def _in_thread(fn):
+    import threading
+
+    t = threading.Thread(target=fn, daemon=True)
+    t.start()
+    t.join(3.0)
+
+
+def test_a_worker_thread_log_returns_at_once_and_reaches_the_activity_panel(gui):
+    # Worker threads used to call root.after() directly: that blocks until the Tk
+    # thread services it (so a busy UI delayed the detector - and its next click), and
+    # raises "main thread is not in main loop" when no mainloop is running.
+    import time
+
+    took = []
+
+    def log_from_worker():
+        start = time.monotonic()
+        gui.log("hello from the worker")
+        took.append(time.monotonic() - start)
+
+    _in_thread(log_from_worker)  # the Tk thread is NOT servicing events meanwhile
+
+    assert took and took[0] < 0.05
+    assert _pump_until(gui, lambda: any("hello from the worker" in line for line in gui.log_list.get(0, "end")))
+
+
+def test_hotkeys_from_the_listener_thread_run_on_the_ui_thread(gui):
+    import threading
+
+    ran_on = []
+    _in_thread(lambda: gui.hotkeys.dispatch(lambda: ran_on.append(threading.current_thread())))
+
+    assert _pump_until(gui, lambda: ran_on)
+    assert ran_on == [threading.main_thread()]
+
+
+def test_update_check_always_reports_back_even_if_it_fails(kc, gui, monkeypatch):
+    def exploding_check(version, fetcher=None):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(kc, "check_for_update", exploding_check)
+    gui.update_status_label.config(text="Checking for updates...")
+
+    gui._run_update_check(silent=False)
+
+    assert _pump_until(gui, lambda: "couldn't check" in gui.update_status_label.cget("text").lower())

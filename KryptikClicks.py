@@ -23,6 +23,7 @@ import sys
 import os
 import json
 import math
+import queue
 import random
 import threading
 import time
@@ -1291,6 +1292,7 @@ class Detector:
 
 
 HOTKEY_DEBOUNCE_SECONDS = 0.3
+UI_QUEUE_POLL_MS = 25  # how often the GUI runs calls handed over from other threads
 
 
 class HotkeyListener:
@@ -1303,8 +1305,7 @@ class HotkeyListener:
     genuine presses in quick succession don't double-fire.
 
     `dispatch`, if given, receives the action callable instead of the listener
-    calling it directly - e.g. to marshal it onto another thread with
-    `lambda action: self.root.after(0, action)`.
+    calling it directly - e.g. to marshal it onto the GUI thread.
     """
 
     def __init__(self, hotkey_map, dispatch=None):
@@ -1396,6 +1397,9 @@ class KryptikClicksGUI:
         self.tk = tk
         self.messagebox = messagebox
         self._quitting = False
+        # Calls handed over from other threads (detector worker, hotkey listener,
+        # update check) for the Tk thread to run - see _on_ui_thread.
+        self._ui_calls = queue.SimpleQueue()
 
         startup_warnings = []
         self.cfg = load_config(on_warning=startup_warnings.append)
@@ -1454,10 +1458,11 @@ class KryptikClicksGUI:
             pynkeyboard.Key[TOGGLE_HOTKEY]: self.on_toggle,
             pynkeyboard.Key[QUIT_HOTKEY]: self.on_quit,
         }
-        self.hotkeys = HotkeyListener(self.hotkey_map, dispatch=lambda action: self.root.after(0, action))
+        self.hotkeys = HotkeyListener(self.hotkey_map, dispatch=self._on_ui_thread)
         self.listener = pynkeyboard.Listener(on_press=self.hotkeys.on_press, on_release=self.hotkeys.on_release)
         self.listener.start()
 
+        self._drain_ui_calls()
         self.worker_thread = threading.Thread(target=self.detector.run, daemon=True)
         self.worker_thread.start()
 
@@ -2233,8 +2238,28 @@ class KryptikClicksGUI:
         self._refresh_status()
         self.root.after(300, self._poll_status)
 
+    def _on_ui_thread(self, fn, *args):
+        """Runs fn(*args) on the Tk thread, from any thread. Tk calls from other
+        threads (even root.after) block until the Tk thread gets round to them - so a
+        busy UI would stall the detector and delay its clicks - and raise once the
+        mainloop isn't running. Other threads hand calls over through a queue instead."""
+        if threading.current_thread() is threading.main_thread():
+            self.root.after(0, fn, *args)
+        else:
+            self._ui_calls.put((fn, args))
+
+    def _drain_ui_calls(self):
+        # Reschedule first, so one failing call (reported by Tk) can't stop the pump.
+        self.root.after(UI_QUEUE_POLL_MS, self._drain_ui_calls)
+        while True:
+            try:
+                fn, args = self._ui_calls.get_nowait()
+            except queue.Empty:
+                return
+            fn(*args)
+
     def log(self, msg):
-        self.root.after(0, self._log_ui, msg)
+        self._on_ui_thread(self._log_ui, msg)
 
     def _log_ui(self, msg):
         ts = time.strftime("%H:%M:%S")
@@ -2369,7 +2394,7 @@ class KryptikClicksGUI:
                 update, failed = check_for_update(__version__), False
             except Exception:
                 update, failed = None, True
-            self.root.after(0, lambda: self._on_update_check_done(update, silent, failed))
+            self._on_ui_thread(self._on_update_check_done, update, silent, failed)
 
         threading.Thread(target=worker, daemon=True).start()
 
