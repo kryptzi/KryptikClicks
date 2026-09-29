@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wherever your mouse already is 200-400ms after it's found.").
 
 ### Fixed
+- **Switching Mode from Generic to Targeted while running kept clicking
+  blindly** on the Generic interval with no trigger on screen, until you
+  paused. It now switches to watching for the trigger straight away.
 - **The app silently failed to open if a saved capture file was damaged**
   (e.g. an empty `click_target.txt` after a crash mid-save). It tried to
   log the "recapture needed" warning before its window existed and crashed

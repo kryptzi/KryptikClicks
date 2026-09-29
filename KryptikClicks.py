@@ -1064,9 +1064,11 @@ class Detector:
                         continue
 
                     if self.cfg.get("click_mode", "targeted") == "generic":
-                        # No trigger to wait for - click on interval for as long as it's active.
+                        # No trigger to wait for - click on interval for as long as it's active
+                        # (and still Generic: the Mode radio applies instantly, even mid-run).
                         self._beep()
-                        while self.scanning_active.is_set() and not self.stop_event.is_set():
+                        while (self.scanning_active.is_set() and not self.stop_event.is_set()
+                               and self.cfg.get("click_mode") == "generic"):
                             if click_and_check_limit():
                                 break
                             sleep_between_clicks()

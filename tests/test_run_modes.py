@@ -999,3 +999,33 @@ def test_fixed_mode_burst_cap_rescan_still_waits_the_click_delay(kc, monkeypatch
     assert len(click_times) == 5
     gaps = [b - a for a, b in zip(click_times, click_times[1:])]
     assert min(gaps) >= 0.09, gaps
+
+
+def test_switching_generic_to_targeted_while_running_stops_blind_clicking(kc, monkeypatch):
+    # The Mode radio commits immediately, but the Generic inner loop only watched
+    # scanning_active - so it kept interval-clicking with no trigger on screen.
+    cfg = kc.load_config()
+    cfg.update({
+        "click_mode": "generic", "click_position": "cursor",
+        "min_delay_ms": 10, "max_delay_ms": 20,
+    })
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (0, 0, 0.0))
+    clicks = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(time.monotonic()))
+    monkeypatch.setattr(pyautogui, "position", lambda: (5, 5))
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    time.sleep(0.2)
+    assert clicks  # generic mode was clicking
+    cfg["click_mode"] = "targeted"  # what _on_mode_changed does
+    switched_at = time.monotonic()
+    time.sleep(0.4)
+    d.stop_event.set()
+    t.join(2.0)
+
+    assert [c for c in clicks if c > switched_at + 0.05] == []
