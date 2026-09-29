@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window was busy, such as while *Choose Window...* builds its previews.
 
 ### Fixed
+- **The `.exe` forgot your capture and settings every time it closed.** A
+  one-file build runs from a temporary folder that Windows deletes on exit,
+  and that's where it was saving them. The `.exe` now keeps them in
+  `%APPDATA%\KryptikClicks` (running from source is unchanged: next to
+  `KryptikClicks.py`).
 - **An unexpected update-check response could leave "Checking for
   updates..." showing forever** (e.g. a release tagged like `v1.7.0-beta`).
   Anything that isn't a plain newer version with a downloadable `.exe` now

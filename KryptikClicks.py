@@ -41,9 +41,29 @@ def resource_path(*parts):
     return os.path.join(base, *parts)
 
 
-TEMPLATE_PATH = os.path.join(SCRIPT_DIR, "trigger_template.png")
-TARGET_PATH = os.path.join(SCRIPT_DIR, "click_target.txt")
-CONFIG_PATH = os.path.join(SCRIPT_DIR, "kryptikclicks_config.json")
+def user_data_dir():
+    """Where captures and settings are kept. Run from source, that's next to the
+    script, as it always has been. A --onefile exe runs from a temporary _MEI folder
+    (which __file__ points into) that's deleted on exit, so the exe keeps them in
+    %APPDATA%\\KryptikClicks instead - or next to the exe if that can't be created."""
+    if not getattr(sys, "frozen", False):
+        return SCRIPT_DIR
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return exe_dir
+    path = os.path.join(appdata, "KryptikClicks")
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        return exe_dir
+    return path
+
+
+DATA_DIR = user_data_dir()
+TEMPLATE_PATH = os.path.join(DATA_DIR, "trigger_template.png")
+TARGET_PATH = os.path.join(DATA_DIR, "click_target.txt")
+CONFIG_PATH = os.path.join(DATA_DIR, "kryptikclicks_config.json")
 
 # --- Defaults (overridden by kryptikclicks_config.json / the settings window) -----
 DEFAULT_CONFIG = {

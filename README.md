@@ -88,7 +88,8 @@ python KryptikClicks.py --version   # print the version and exit
 
 Your capture and settings are saved automatically and reloaded next time you
 open the app — you only need to capture once, unless you want to change what
-it's watching for (use **Recapture...**).
+it's watching for (use **Recapture...**). They live next to `KryptikClicks.py`
+when you run from source, and in `%APPDATA%\KryptikClicks` for the `.exe`.
 
 ## Building the standalone .exe
 
