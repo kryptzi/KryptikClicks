@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window was busy, such as while *Choose Window...* builds its previews.
 - **Dependencies are pinned** in `requirements.txt` to the exact versions
   this release is tested with, so a fresh install gets the same ones.
+- **README brought up to date** with the app: the Simple/Advanced tabs, color
+  detection, scan area, which settings apply instantly vs. on Save, how
+  fixed-point and cursor-position clicking actually pace themselves, the
+  correct default match threshold (0.50, not 0.85) and current button names.
 
 ### Fixed
 - **The `.exe` forgot your capture and settings every time it closed.** A
@@ -489,7 +493,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.3...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.3...v1.6.0
 [1.5.3]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.1...v1.5.3
 [1.5.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.1...v1.5.0

@@ -1,18 +1,20 @@
 """
 KryptikClicks
 -----------------------
-Watches the screen for a trigger image you capture (any text, icon, or button
-— found anywhere on screen, via template image matching) and, for as long as
-it stays visible, repeatedly clicks a fixed point you chose during capture
-(not the trigger itself) with a randomized delay between clicks.
+Targeted mode watches the screen (every monitor, or one window) for a trigger
+you capture - found by image template matching or by its distinctive color -
+and clicks when it appears: a fixed point chosen during capture, or wherever
+the mouse already is, after an optional randomized trigger delay. Generic mode
+is a plain interval autoclicker. Clicks use a randomized delay between them.
 
 Setup:
-    pip install opencv-python mss numpy pyautogui pynput
+    pip install -r requirements.txt
 
 Usage:
     python KryptikClicks.py             # open the settings window (default)
     python KryptikClicks.py --capture   # capture the template/target from a terminal, no GUI
     python KryptikClicks.py --headless  # run the watcher from a terminal, no GUI
+    python KryptikClicks.py --version   # print the version and exit
 
 Hotkeys (global, work even without the window focused):
     F6  - toggle scanning/clicking on and off

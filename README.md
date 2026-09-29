@@ -3,9 +3,9 @@
 </p>
 
 A lightweight Windows tool with two modes: **Targeted**, which watches your
-screen for a trigger you capture (any bit of text, an icon, a button —
-anywhere on screen) and clicks a spot for as long as that trigger stays
-visible; and **Generic**, a classic fixed-interval autoclicker with no
+screen for a trigger you capture (any bit of text, an icon, a button, or just
+a distinctive color — anywhere on screen or in one window) and clicks when it
+shows up; and **Generic**, a classic fixed-interval autoclicker with no
 trigger needed at all. Both click with a randomized delay between clicks.
 
 Useful for things like: a game notification/button that needs clicking
@@ -34,38 +34,57 @@ python KryptikClicks.py --version   # print the version and exit
 
 ## Usage
 
+The window has two tabs. **Simple** has everything needed for the common case
+(mode, click position, capture, Start/Quit) plus a one-line summary of exactly
+what it's currently set up to do. **Advanced** has detection, scan area and
+timing settings.
+
 **Targeted mode** (default):
-1. Open KryptikClicks, select **Targeted** under Mode, then choose a click
-   position: a **fixed point** (captured below) or your **current cursor
-   position**. With cursor position selected, it still watches for the
-   trigger as normal — it just clicks wherever your mouse already is instead
-   of jumping it to a captured point.
-2. Click **Capture Template + Click Target...** (this reads just **Capture
-   Template...** if you chose cursor position, since no click point needs to
-   be captured). Your screen freezes into a snapshot. Drag a tight box
-   around the trigger you want it to watch for (e.g. just the fixed part of
-   some text — the trigger image should look the same every time it
-   appears).
-3. If you chose a fixed point, click once more on the spot you want it to
-   click when the trigger shows up. If you chose cursor position, capture
-   ends right there — there's no second step.
-4. Press **Start (F6)**. It'll click — the captured spot, or your live
-   cursor position if you chose that — with a randomized delay between
-   clicks, for as long as the trigger stays visible, and stop automatically
-   when it disappears.
+1. Select **Targeted** under Mode, then choose a click position: a **fixed
+   point** (captured below) or your **current cursor position**. With cursor
+   position selected, it still watches for the trigger as normal — it just
+   clicks wherever your mouse already is instead of jumping it to a captured
+   point.
+2. Click **Capture Trigger + Click Target...** (just **Capture Trigger...**
+   with cursor position, since no click point is needed). Your screen freezes
+   into a snapshot. Drag a tight box around the trigger you want it to watch
+   for (e.g. just the fixed part of some text — it should look the same every
+   time it appears).
+3. With a fixed point, click once more on the spot you want it to click when
+   the trigger shows up. With cursor position, capture ends right there.
+4. Press **Start (F6)**. Nothing is clicked for the first 0.75s, so you can
+   move the mouse off the Start button. Then:
+   - **Fixed point:** it clicks the captured spot, with a randomized delay
+     between clicks, for as long as the trigger stays visible (re-checking
+     with a full scan every 5 clicks), and stops when it disappears.
+   - **Cursor position:** it clicks once each time the trigger appears, then
+     waits for it to go away before treating the next sighting as new. If it
+     is still there after 2 seconds, it clicks again.
 
 **Generic mode:**
 1. Select **Generic** under Mode, then choose a click position: a **fixed
-   point** (captured the same way as above) or your **current cursor
-   position**.
-2. Press **Start (F6)** — it clicks immediately on interval, no trigger
-   needed, until you pause it or it hits the repeat limit.
+   point** (use **Capture Click Target...** — just click the spot; your saved
+   Targeted trigger is left alone) or your **current cursor position**.
+2. Press **Start (F6)** — it clicks on the interval, no trigger needed, until
+   you pause it or it hits the repeat limit.
 
 **Hotkeys** (global — work even while another window has focus):
 - `F6` — toggle scanning/clicking on and off
 - `F9` — quit
 
-**Settings** (hover any label in the app for details):
+**Advanced tab** (hover any setting label in the app for details):
+- **Detection method** — **Image template match** looks for the picture you
+  captured; **Color match** learns the distinctive color inside your capture
+  box and fires when enough pixels of that color appear (at least half as
+  many as were in the capture). Color match ignores whatever is behind the
+  trigger, so it's the better choice for colored text over a changing
+  background. How close a pixel must be to count is `color_tolerance` in the
+  settings file (default `20` per RGB channel); recapture after changing it.
+- **Scan area** — **All monitors**, or a **Specific window** picked from live
+  previews (**Choose Window...**). A chosen window is tracked by its title, so
+  it keeps working if the window moves or the app is restarted, and scanning
+  just waits while it's minimized or closed. **Limit to Region...** narrows
+  that to part of the window (e.g. just a game's viewport).
 - **Min/Max delay (ms)** — the random delay range between clicks while it's
   actively clicking.
 - **Trigger delay min/max (ms)** — Targeted mode only. How long to wait after
@@ -73,18 +92,22 @@ python KryptikClicks.py --version   # print the version and exit
   range, or set both the same for a fixed delay). If the trigger is gone by
   the time the wait ends, it doesn't click. `0`/`0` (the default) clicks
   immediately.
-- **Match threshold (0-1)** — Targeted mode only. How closely the screen must
-  match your captured trigger image to fire clicking. Higher = stricter/fewer
-  false triggers; lower = more lenient but may misfire. `0.85` is a good
-  default.
-- **Click position** — a fixed captured point, or your current cursor
-  position. Available in both modes: in Targeted mode with cursor position
-  selected, it still watches for the trigger as normal, it just clicks
-  wherever the mouse already is instead of jumping it to a captured point.
+- **Match threshold (0-1)** — Image template match only. How closely the
+  screen must match your captured picture to fire clicking. Higher =
+  stricter/fewer false triggers; lower = more lenient but may misfire. `0.50`
+  is the default; raise it if it fires on the wrong thing, lower it if it
+  doesn't fire at all.
 - **Click button** — left, right, or middle mouse button.
 - **Repeat limit (0 = infinite)** — automatically pause after this many
   clicks.
 - **Sound alert** — plays a short beep when it starts clicking.
+- **Check for updates automatically** — the `.exe` checks GitHub for a newer
+  release on launch and offers to open the download page (it never installs
+  anything itself).
+
+Mode, click position, detection method and scan area apply the moment you
+change them. The numeric settings, click button and checkboxes in the
+**Settings** section apply when you press **Save Settings**.
 
 Your capture and settings are saved automatically and reloaded next time you
 open the app — you only need to capture once, unless you want to change what
