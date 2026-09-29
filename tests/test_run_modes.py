@@ -552,3 +552,213 @@ def test_window_mode_idles_without_clicking_when_target_window_minimized(kc, mon
     assert calls == []
     assert d.total_clicks == 0
     assert d.scanning_active.is_set() is True
+
+
+# --- Trigger delay: a (randomized) wait between spotting a NEW trigger and the first click ---
+
+def _cursor_mode_detector(kc, monkeypatch, **overrides):
+    """Targeted + cursor-position + color detection (the owner's real setup),
+    with the start grace period disabled so timings measure only the trigger delay."""
+    cfg = kc.load_config()
+    cfg.update({
+        "click_mode": "targeted",
+        "click_position": "cursor",
+        "detection_method": "color",
+        "target_color": [118, 52, 171],
+        "min_color_pixels": 1,
+        "min_delay_ms": 0,
+        "max_delay_ms": 1,
+    })
+    cfg.update(overrides)
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "position", lambda: (5, 5))
+    return d
+
+
+def _run_for(detector, seconds):
+    t = threading.Thread(target=detector.run, daemon=True)
+    t.start()
+    t.join(seconds)
+    detector.stop_event.set()
+    t.join(2.0)
+    return t
+
+
+def test_trigger_delay_waits_before_the_first_click_of_a_detection(kc, monkeypatch):
+    d = _cursor_mode_detector(kc, monkeypatch, trigger_delay_min_ms=250, trigger_delay_max_ms=250)
+    first_seen = []
+
+    def always_visible(self, sct, region):
+        if not first_seen:
+            first_seen.append(time.monotonic())
+        return (5, 5, 100)
+
+    monkeypatch.setattr(kc.Detector, "_color_match_score_in", always_visible)
+    click_times = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.monotonic()))
+
+    d.start_scanning()
+    _run_for(d, 0.6)
+
+    assert click_times, "never clicked"
+    assert click_times[0] - first_seen[0] >= 0.24
+
+
+def test_zero_trigger_delay_clicks_as_soon_as_the_trigger_is_seen(kc, monkeypatch):
+    d = _cursor_mode_detector(kc, monkeypatch, trigger_delay_min_ms=0, trigger_delay_max_ms=0)
+    first_seen = []
+
+    def always_visible(self, sct, region):
+        if not first_seen:
+            first_seen.append(time.monotonic())
+        return (5, 5, 100)
+
+    monkeypatch.setattr(kc.Detector, "_color_match_score_in", always_visible)
+    click_times = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.monotonic()))
+
+    d.start_scanning()
+    _run_for(d, 0.3)
+
+    assert click_times
+    assert click_times[0] - first_seen[0] < 0.1
+
+
+def test_trigger_delay_does_not_click_if_the_trigger_is_gone_when_the_wait_ends(kc, monkeypatch):
+    # The whole point of a trigger is "click while this is on screen" - if it
+    # vanished during the wait, a late click would land on nothing meaningful.
+    d = _cursor_mode_detector(kc, monkeypatch, trigger_delay_min_ms=150, trigger_delay_max_ms=150)
+    calls = [0]
+
+    def visible_only_on_first_scan(self, sct, region):
+        calls[0] += 1
+        return (5, 5, 100) if calls[0] == 1 else (0, 0, 0)
+
+    monkeypatch.setattr(kc.Detector, "_color_match_score_in", visible_only_on_first_scan)
+    clicks = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(a))
+
+    d.start_scanning()
+    _run_for(d, 0.5)
+
+    assert clicks == []
+    assert calls[0] > 1  # it did re-check after the wait rather than never looking again
+
+
+def test_pausing_during_the_trigger_delay_cancels_the_pending_click(kc, monkeypatch):
+    d = _cursor_mode_detector(kc, monkeypatch, trigger_delay_min_ms=800, trigger_delay_max_ms=800)
+    monkeypatch.setattr(kc.Detector, "_color_match_score_in", lambda self, sct, region: (5, 5, 100))
+    clicks = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(a))
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    time.sleep(0.2)  # mid-delay
+    d.pause_scanning()
+    time.sleep(1.0)  # well past when the delayed click would have fired
+    d.stop_event.set()
+    t.join(2.0)
+
+    assert clicks == []
+
+
+def test_quitting_during_a_long_trigger_delay_exits_promptly(kc, monkeypatch):
+    d = _cursor_mode_detector(kc, monkeypatch, trigger_delay_min_ms=10000, trigger_delay_max_ms=10000)
+    monkeypatch.setattr(kc.Detector, "_color_match_score_in", lambda self, sct, region: (5, 5, 100))
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: None)
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    time.sleep(0.2)
+    d.stop_event.set()
+    t.join(0.5)
+
+    assert not t.is_alive()
+
+
+def test_trigger_delay_is_not_reapplied_when_the_burst_cap_forces_a_rescan(kc, monkeypatch):
+    # Fixed-position mode re-scans the full region every MAX_CLICKS_PER_BURST
+    # clicks as a sanity check - that's the SAME appearance of the trigger, not
+    # a new one, so it mustn't pay the "reaction time" again mid-stream.
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+    with open(kc.TARGET_PATH, "w") as f:
+        f.write("5,5")
+    cfg = kc.load_config()
+    cfg.update({
+        "click_mode": "targeted", "click_position": "fixed", "click_limit": 6,
+        "min_delay_ms": 0, "max_delay_ms": 1,
+        "trigger_delay_min_ms": 300, "trigger_delay_max_ms": 300,
+    })
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    monkeypatch.setattr(kc.Detector, "MAX_CLICKS_PER_BURST", 2)
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
+    click_times = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.monotonic()))
+
+    started = time.monotonic()
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    assert len(click_times) == 6
+    assert click_times[0] - started >= 0.28  # paid once, up front
+    gaps = [b - a for a, b in zip(click_times, click_times[1:])]
+    assert max(gaps) < 0.2, gaps  # ...and never again across the burst-cap re-scans
+
+
+def test_trigger_delay_applies_again_when_the_trigger_disappears_and_reappears(kc, monkeypatch):
+    d = _cursor_mode_detector(kc, monkeypatch, trigger_delay_min_ms=200, trigger_delay_max_ms=200)
+    state = {"visible": True}
+    click_times = []
+
+    def on_click(*a, **k):
+        click_times.append(time.monotonic())
+        state["visible"] = False  # clicking dismisses it...
+        threading.Timer(0.1, lambda: state.update(visible=True)).start()  # ...until it pops up again
+
+    monkeypatch.setattr(
+        kc.Detector, "_color_match_score_in",
+        lambda self, sct, region: (5, 5, 100) if state["visible"] else (0, 0, 0),
+    )
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", on_click)
+
+    d.start_scanning()
+    _run_for(d, 1.2)
+
+    assert len(click_times) >= 2
+    gaps = [b - a for a, b in zip(click_times, click_times[1:])]
+    # 0.1s hidden + a fresh 0.2s trigger delay; without re-applying it this would be ~0.1s.
+    assert all(gap >= 0.28 for gap in gaps), gaps
+
+
+def test_generic_mode_ignores_the_trigger_delay(kc, monkeypatch):
+    cfg = kc.load_config()
+    cfg.update({
+        "click_mode": "generic", "click_position": "fixed", "click_limit": 2,
+        "min_delay_ms": 0, "max_delay_ms": 1,
+        "trigger_delay_min_ms": 5000, "trigger_delay_max_ms": 5000,
+    })
+    d = kc.Detector(cfg, log=lambda m: None)
+    d.click_x, d.click_y = 5, 5
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    clicks = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(a))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d, timeout=1.0)
+
+    assert len(clicks) == 2

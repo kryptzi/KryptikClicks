@@ -68,6 +68,11 @@ python KryptikClicks.py --version   # print the version and exit
 **Settings** (hover any label in the app for details):
 - **Min/Max delay (ms)** — the random delay range between clicks while it's
   actively clicking.
+- **Trigger delay min/max (ms)** — Targeted mode only. How long to wait after
+  the trigger first appears before the first click (a random time in that
+  range, or set both the same for a fixed delay). If the trigger is gone by
+  the time the wait ends, it doesn't click. `0`/`0` (the default) clicks
+  immediately.
 - **Match threshold (0-1)** — Targeted mode only. How closely the screen must
   match your captured trigger image to fire clicking. Higher = stricter/fewer
   false triggers; lower = more lenient but may misfire. `0.85` is a good

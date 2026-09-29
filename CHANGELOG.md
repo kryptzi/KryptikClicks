@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Trigger delay.** New *Trigger delay min/max (ms)* settings (Advanced tab)
+  add a wait between the moment a trigger is spotted and the first click -
+  a random time in that range each time, like a human reaction time, or a
+  fixed delay if both are set to the same value. Works with both color and
+  image detection. Details:
+  - After the wait it looks again, and **doesn't click if the trigger has
+    disappeared** in the meantime (or the target window was minimized).
+  - Pausing (F6) or quitting (F9) during the wait cancels the pending click
+    straight away rather than after the wait finishes.
+  - Only paid once per appearance: fixed-position mode's periodic
+    "re-verify every 5 clicks" re-scan doesn't restart the wait while the
+    trigger has stayed on screen the whole time.
+  - Defaults to 0/0 (click immediately), so existing setups behave exactly
+    as before. Hidden in Generic mode, which has no trigger to react to.
+  - The Simple tab's summary sentence now includes it (e.g. "...clicking
+    wherever your mouse already is 200-400ms after it's found.").
+
 ### Fixed
 - **Switching Mode to Generic and back scrambled the Advanced tab.** Hiding
   *Detection method* and *Scan area* for Generic mode and showing them again

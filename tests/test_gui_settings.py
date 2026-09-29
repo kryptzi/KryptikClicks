@@ -37,6 +37,57 @@ def gui(make_gui):
     return make_gui()
 
 
+def _is_shown(widget):
+    return bool(widget.winfo_manager())
+
+
+def test_trigger_delay_fields_save_to_config(kc, gui):
+    gui.trigger_min_var.set("150")
+    gui.trigger_max_var.set("300")
+
+    gui.on_save_settings()
+
+    assert gui.cfg["trigger_delay_min_ms"] == 150.0
+    assert gui.cfg["trigger_delay_max_ms"] == 300.0
+    saved = kc.load_config()
+    assert saved["trigger_delay_min_ms"] == 150.0
+    assert saved["trigger_delay_max_ms"] == 300.0
+
+
+def test_invalid_trigger_delay_is_rejected_without_saving(kc, gui, monkeypatch):
+    errors = []
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda title, msg: errors.append(msg))
+    gui.trigger_min_var.set("300")
+    gui.trigger_max_var.set("100")
+
+    gui.on_save_settings()
+
+    assert errors
+    assert kc.load_config()["trigger_delay_min_ms"] == 0
+
+
+def test_trigger_delay_fields_show_saved_values_on_open(kc, make_gui):
+    kc.save_config({"trigger_delay_min_ms": 120, "trigger_delay_max_ms": 480})
+
+    app = make_gui()
+
+    assert float(app.trigger_min_var.get()) == 120
+    assert float(app.trigger_max_var.get()) == 480
+
+
+def test_trigger_delay_rows_hide_in_generic_mode_and_return_in_targeted(gui):
+    # Generic mode has no trigger to react to, so the setting would be inert there.
+    assert all(_is_shown(w) for w in gui.trigger_delay_row_widgets)
+
+    gui.mode_var.set("generic")
+    gui._on_mode_changed()
+    assert not any(_is_shown(w) for w in gui.trigger_delay_row_widgets)
+
+    gui.mode_var.set("targeted")
+    gui._on_mode_changed()
+    assert all(_is_shown(w) for w in gui.trigger_delay_row_widgets)
+
+
 def test_switching_generic_then_back_to_targeted_keeps_advanced_tab_order(gui):
     # pack_forget() + pack() appends a widget to the END of its parent's packing
     # list - so hiding Detection method / Scan area for Generic and re-showing them

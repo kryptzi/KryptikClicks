@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_default_config_has_generic_mode_settings(kc):
     cfg = kc.load_config()
     assert cfg["click_mode"] == "targeted"
@@ -130,3 +133,35 @@ def test_load_config_rejects_max_delay_below_min_delay(kc):
     cfg = kc.load_config()
     assert cfg["min_delay_ms"] == kc.DEFAULT_CONFIG["min_delay_ms"]
     assert cfg["max_delay_ms"] == kc.DEFAULT_CONFIG["max_delay_ms"]
+
+
+def test_default_config_has_no_trigger_delay(kc):
+    # Off by default, so existing setups keep clicking the instant a trigger shows up.
+    cfg = kc.load_config()
+    assert cfg["trigger_delay_min_ms"] == 0
+    assert cfg["trigger_delay_max_ms"] == 0
+
+
+def test_load_config_accepts_valid_trigger_delay(kc):
+    kc.save_config({"trigger_delay_min_ms": 250, "trigger_delay_max_ms": 600})
+    cfg = kc.load_config()
+    assert cfg["trigger_delay_min_ms"] == 250
+    assert cfg["trigger_delay_max_ms"] == 600
+
+
+@pytest.mark.parametrize("bad", [
+    {"trigger_delay_min_ms": -1, "trigger_delay_max_ms": 100},
+    {"trigger_delay_min_ms": 300, "trigger_delay_max_ms": 100},
+    {"trigger_delay_min_ms": "slow", "trigger_delay_max_ms": 100},
+    {"trigger_delay_min_ms": True, "trigger_delay_max_ms": 100},
+    {"trigger_delay_min_ms": 0, "trigger_delay_max_ms": float("inf")},
+    {"trigger_delay_min_ms": float("nan"), "trigger_delay_max_ms": 100},
+])
+def test_load_config_resets_invalid_trigger_delay_pair_to_defaults(kc, bad):
+    # Both values feed time.sleep(random.uniform(min, max)) on the worker thread -
+    # a NaN/inf/negative there raises and silently kills detection, so a bad pair
+    # falls back to "no delay" rather than being trusted.
+    kc.save_config(bad)
+    cfg = kc.load_config()
+    assert cfg["trigger_delay_min_ms"] == 0
+    assert cfg["trigger_delay_max_ms"] == 0

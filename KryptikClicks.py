@@ -22,6 +22,7 @@ Hotkeys (global, work even without the window focused):
 import sys
 import os
 import json
+import math
 import random
 import threading
 import time
@@ -47,6 +48,8 @@ CONFIG_PATH = os.path.join(SCRIPT_DIR, "kryptikclicks_config.json")
 DEFAULT_CONFIG = {
     "min_delay_ms": 50,
     "max_delay_ms": 150,
+    "trigger_delay_min_ms": 0,
+    "trigger_delay_max_ms": 0,
     "match_threshold": 0.50,
     "click_button": "left",
     "click_mode": "targeted",
@@ -149,7 +152,20 @@ def load_config():
         cfg["max_delay_ms"] = DEFAULT_CONFIG["max_delay_ms"]
     if not is_number(thr) or not (0.0 < thr <= 1.0):
         cfg["match_threshold"] = DEFAULT_CONFIG["match_threshold"]
+    if not is_valid_delay_range(cfg.get("trigger_delay_min_ms"), cfg.get("trigger_delay_max_ms")):
+        cfg["trigger_delay_min_ms"] = DEFAULT_CONFIG["trigger_delay_min_ms"]
+        cfg["trigger_delay_max_ms"] = DEFAULT_CONFIG["trigger_delay_max_ms"]
     return cfg
+
+
+def is_valid_delay_range(min_ms, max_ms):
+    """True if (min_ms, max_ms) is safe to feed time.sleep(random.uniform(...)):
+    real finite numbers (not bools), min >= 0 and max >= min. NaN/inf pass naive
+    `< 0` / `max < min` checks but make time.sleep raise on the worker thread."""
+    def ok(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+    return ok(min_ms) and ok(max_ms) and 0 <= min_ms <= max_ms
 
 
 def save_config(cfg):
@@ -298,7 +314,16 @@ def describe_current_setup(cfg, ready, captured_desc=""):
     else:
         location_phrase = "anywhere on your screen"
 
-    return f"Watching for {captured_desc} {location_phrase}, clicking {position_phrase} when it's found."
+    trigger_min = int(cfg.get("trigger_delay_min_ms", 0))
+    trigger_max = int(cfg.get("trigger_delay_max_ms", 0))
+    if trigger_max <= 0:
+        timing_phrase = "when it's found"
+    elif trigger_min == trigger_max:
+        timing_phrase = f"{trigger_max}ms after it's found"
+    else:
+        timing_phrase = f"{trigger_min}-{trigger_max}ms after it's found"
+
+    return f"Watching for {captured_desc} {location_phrase}, clicking {position_phrase} {timing_phrase}."
 
 
 def find_window_by_title(windows, title):
@@ -630,7 +655,8 @@ def capture_template_cli():
     print(f"Saved click target {point} to {TARGET_PATH}")
 
 
-def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str):
+def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str,
+                         trigger_min_str="0", trigger_max_str="0"):
     """Parses/validates the settings-form text fields. Raises ValueError with a
     user-facing message on invalid input; otherwise returns the parsed values."""
     try:
@@ -638,8 +664,12 @@ def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str):
         max_ms = float(max_ms_str)
         thr = float(thr_str)
         click_limit = int(float(click_limit_str))
+        trigger_min = float(trigger_min_str)
+        trigger_max = float(trigger_max_str)
     except ValueError:
         raise ValueError("Enter valid numbers.")
+    if not is_valid_delay_range(trigger_min, trigger_max):
+        raise ValueError("Trigger delay min must be >= 0 and <= trigger delay max.")
     if min_ms < 0 or max_ms < min_ms:
         raise ValueError("Min delay must be >= 0 and <= max delay.")
     if not (0.0 < thr <= 1.0):
@@ -651,6 +681,8 @@ def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str):
         "max_delay_ms": max_ms,
         "match_threshold": thr,
         "click_limit": click_limit,
+        "trigger_delay_min_ms": trigger_min,
+        "trigger_delay_max_ms": trigger_max,
     }
 
 
@@ -942,10 +974,39 @@ class Detector:
             _, x, y, r = best
             return (x, y), r
 
+        def scan_for_trigger():
+            """Resolves this tick's region(s) (logging window found/lost transitions)
+            and scans them. Returns (match_xy, region), or (None, None)."""
+            nonlocal cached_hwnd, last_window_status
+            regions, cached_hwnd, status = self._resolve_scan_regions(cached_hwnd, sct)
+            if status != last_window_status:
+                if status == "not_found":
+                    title = self.cfg.get("scan_window_title", "")
+                    self.log(f'Target window "{title}" not found - waiting...')
+                elif status == "minimized":
+                    self.log("Target window is minimized - waiting...")
+                elif status == "ok" and last_window_status in ("not_found", "minimized"):
+                    self.log("Target window found - resuming scan.")
+                last_window_status = status
+            if not regions:
+                return None, None
+            return scan_regions(regions)
+
         def sleep_between_clicks():
             min_d = self.cfg["min_delay_ms"] / 1000.0
             max_d = self.cfg["max_delay_ms"] / 1000.0
             time.sleep(random.uniform(min_d, max_d))
+
+        def wait_while_active(seconds):
+            """Waits up to `seconds`, giving up early if scanning is paused or the app
+            quits. Returns True only if the whole wait elapsed while still active."""
+            deadline = time.monotonic() + seconds
+            while self.scanning_active.is_set() and not self.stop_event.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return True
+                self.stop_event.wait(min(remaining, SCAN_INTERVAL))
+            return False
 
         def click_and_check_limit():
             """Clicks once; if that hits the configured limit, pauses and returns True."""
@@ -956,9 +1017,15 @@ class Detector:
                 return True
             return False
 
+        # True while the trigger from the previous burst was still on screen when that
+        # burst ended (fixed mode's MAX_CLICKS_PER_BURST re-scan) - that's the same
+        # appearance continuing, so the trigger delay mustn't be paid again for it.
+        trigger_still_showing = False
+
         try:
             while not self.stop_event.is_set():
                 if not (self.scanning_active.is_set() and self.ready) or self._grace_period_active():
+                    trigger_still_showing = False
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -972,26 +1039,28 @@ class Detector:
                     continue
 
                 scan_tick()
-                regions, cached_hwnd, status = self._resolve_scan_regions(cached_hwnd, sct)
-                if status != last_window_status:
-                    if status == "not_found":
-                        title = self.cfg.get("scan_window_title", "")
-                        self.log(f'Target window "{title}" not found - waiting...')
-                    elif status == "minimized":
-                        self.log("Target window is minimized - waiting...")
-                    elif status == "ok" and last_window_status in ("not_found", "minimized"):
-                        self.log("Target window found - resuming scan.")
-                    last_window_status = status
-                if not regions:
-                    time.sleep(SCAN_INTERVAL)
-                    continue
-
-                match, hit_region = scan_regions(regions)
+                match, hit_region = scan_for_trigger()
                 if match is None:
+                    trigger_still_showing = False
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                self.log("Trigger detected - clicking...")
+                trigger_delay = 0.0 if trigger_still_showing else random.uniform(
+                    self.cfg.get("trigger_delay_min_ms", 0), self.cfg.get("trigger_delay_max_ms", 0)
+                ) / 1000.0
+                if trigger_delay > 0:
+                    self.log(f"Trigger detected - clicking in {round(trigger_delay * 1000)}ms...")
+                    if not wait_while_active(trigger_delay):
+                        continue  # paused/quit mid-wait - drop the pending click
+                    # Re-scan everything (not just around the old spot) - the window may
+                    # have moved or been minimized while we waited.
+                    scan_tick()
+                    match, hit_region = scan_for_trigger()
+                    if match is None:
+                        self.log("Trigger disappeared during the delay - not clicking.")
+                        continue
+                else:
+                    self.log("Trigger detected - clicking...")
                 self._beep()
                 cursor_mode = self.cfg.get("click_position") == "cursor"
                 burst_clicks = 0
@@ -1025,6 +1094,7 @@ class Detector:
                     sleep_between_clicks()
                     scan_tick()
                     match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
+                trigger_still_showing = match is not None
                 self.log(f"Stopped clicking ({self.total_clicks} clicks this session).")
         finally:
             executor.shutdown(wait=False)
@@ -1509,8 +1579,21 @@ class KryptikClicksGUI:
             "Longest random pause between clicks while it's actively clicking. "
             "Must be >= Min delay.",
         )
+        self.trigger_min_var = tk.StringVar(value=str(self.cfg["trigger_delay_min_ms"]))
+        self.trigger_max_var = tk.StringVar(value=str(self.cfg["trigger_delay_max_ms"]))
+        self.trigger_delay_row_widgets = settings_row(
+            "Trigger delay min (ms)", self.trigger_min_var, 2,
+            "How long to wait after the trigger first appears before the first click - "
+            "a random time between Trigger delay min and max, like a human reaction time. "
+            "If the trigger is gone by the time the wait ends, it doesn't click. "
+            "0 and 0 = click immediately. Targeted mode only.",
+        ) + settings_row(
+            "Trigger delay max (ms)", self.trigger_max_var, 3,
+            "Longest wait after the trigger first appears before the first click. "
+            "Must be >= Trigger delay min. Set both to the same value for a fixed delay.",
+        )
         self.thr_row_widgets = settings_row(
-            "Match threshold (0-1)", self.thr_var, 2,
+            "Match threshold (0-1)", self.thr_var, 4,
             "How closely the screen must match your captured trigger image to fire "
             "clicking (1.0 = pixel-perfect match). Higher = stricter, fewer false triggers but "
             "may miss it if rendering shifts slightly. Lower = more lenient but may misfire on "
@@ -1523,17 +1606,17 @@ class KryptikClicksGUI:
             settings, text="Click button", bg=c["bg"], fg=c["text"], font=(FONT, 9),
             cursor="question_arrow",
         )
-        button_label.grid(row=3, column=0, sticky="w", pady=7)
+        button_label.grid(row=5, column=0, sticky="w", pady=7)
         self._add_tooltip(button_label, "Which mouse button to click with when the trigger is detected.")
         self.button_var = tk.StringVar(value=self.cfg["click_button"])
         ttk.Combobox(
             settings, textvariable=self.button_var, values=CLICK_BUTTONS, width=7,
             style="Field.TCombobox", state="readonly",
-        ).grid(row=3, column=1, pady=7, sticky="e")
+        ).grid(row=5, column=1, pady=7, sticky="e")
 
         self.limit_var = tk.StringVar(value=str(self.cfg["click_limit"]))
         settings_row(
-            "Repeat limit (0 = infinite)", self.limit_var, 4,
+            "Repeat limit (0 = infinite)", self.limit_var, 6,
             "Automatically pause after this many clicks. Set to 0 to keep clicking with "
             "no limit until you stop it manually.",
         )
@@ -1543,14 +1626,14 @@ class KryptikClicksGUI:
             settings, text="Sound alert when it starts clicking", variable=self.sound_var,
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"], activebackground=c["bg"],
             activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=7)
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=7)
 
         self.auto_update_var = tk.BooleanVar(value=self.cfg["auto_update_check"])
         tk.Checkbutton(
             settings, text="Check for updates automatically", variable=self.auto_update_var,
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"], activebackground=c["bg"],
             activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=7)
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=7)
 
         ttk.Button(
             advanced_tab, text="Save Settings", style="Accent.TButton", command=self.on_save_settings
@@ -1618,6 +1701,12 @@ class KryptikClicksGUI:
             # Save Settings) - put them back above the settings divider where they started.
             self.detection_frame.pack(fill="x", padx=20, pady=(16, 0), before=self.advanced_divider)
             self.scan_scope_frame.pack(fill="x", padx=20, before=self.advanced_divider)
+        # Same for the trigger delay - Generic mode has no trigger to react to.
+        for widget in self.trigger_delay_row_widgets:
+            if is_generic:
+                widget.grid_remove()
+            else:
+                widget.grid()
         # The click-position choice (fixed point / current cursor) applies to
         # both modes, so it's always shown - only the trigger-capture
         # requirement (Targeted needs a template; Generic doesn't) differs.
@@ -1983,7 +2072,8 @@ class KryptikClicksGUI:
     def on_save_settings(self):
         try:
             parsed = parse_settings_input(
-                self.min_var.get(), self.max_var.get(), self.thr_var.get(), self.limit_var.get()
+                self.min_var.get(), self.max_var.get(), self.thr_var.get(), self.limit_var.get(),
+                trigger_min_str=self.trigger_min_var.get(), trigger_max_str=self.trigger_max_var.get(),
             )
         except ValueError as e:
             self.messagebox.showerror("Invalid settings", str(e))
