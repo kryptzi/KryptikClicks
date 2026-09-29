@@ -1899,7 +1899,7 @@ class KryptikClicksGUI:
             "Trigger delay min (ms)", self.trigger_min_var, 2,
             "How long to wait after the trigger first appears before the first click - "
             "a random time between Trigger delay min and max, like a human reaction time. "
-            "If the trigger is gone by the time the wait ends, it doesn't click. "
+            "It only clicks if the trigger stays up for the whole wait. "
             "0 and 0 = click immediately. Targeted mode only.",
         ) + settings_row(
             "Trigger delay max (ms)", self.trigger_max_var, 3,

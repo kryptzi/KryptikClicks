@@ -89,9 +89,9 @@ timing settings.
   actively clicking.
 - **Trigger delay min/max (ms)** — Targeted mode only. How long to wait after
   the trigger first appears before the first click (a random time in that
-  range, or set both the same for a fixed delay). If the trigger is gone by
-  the time the wait ends, it doesn't click. `0`/`0` (the default) clicks
-  immediately.
+  range, or set both the same for a fixed delay). It only clicks if the
+  trigger stays up for the whole wait; one that goes away and comes back
+  starts a new wait. `0`/`0` (the default) clicks immediately.
 - **Match threshold (0-1)** — Image template match only. How closely the
   screen must match your captured picture to fire clicking. Higher =
   stricter/fewer false triggers; lower = more lenient but may misfire. `0.50`
