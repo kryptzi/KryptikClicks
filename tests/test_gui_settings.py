@@ -1,10 +1,17 @@
+import gc
+
 import pytest
 
 
 @pytest.fixture
 def make_gui(kc, monkeypatch):
     """Builds a real KryptikClicksGUI (real Tk widgets) with the blocking mainloop and
-    the global keyboard hook stubbed out, so form wiring can be exercised directly."""
+    the global keyboard hook stubbed out, so form wiring can be exercised directly.
+
+    Teardown collects garbage on the main thread on purpose: the app sits in
+    reference cycles, and if cyclic GC later frees its Tk variables on some other
+    thread (e.g. a later test's detector worker), Variable.__del__ blocks that thread
+    ~1s per variable waiting for a Tk mainloop that isn't running - stalling it."""
     import tkinter as tk
     from pynput import keyboard as pynkeyboard
 
@@ -29,7 +36,10 @@ def make_gui(kc, monkeypatch):
     yield make
     for app in apps:
         app.detector.stop_event.set()
+        app.worker_thread.join(2.0)
         app.root.destroy()
+    apps.clear()
+    gc.collect()
 
 
 @pytest.fixture
