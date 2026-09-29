@@ -1224,9 +1224,6 @@ class Detector:
         def click_delay():
             return random.uniform(self.cfg["min_delay_ms"], self.cfg["max_delay_ms"]) / 1000.0
 
-        def sleep_between_clicks():
-            wait_while_active(click_delay())
-
         def wait_while_active(seconds, still_wanted=lambda: True):
             """Waits up to `seconds`, giving up early if scanning is paused, the app quits
             or still_wanted() turns False. Returns True only if the whole wait elapsed.
@@ -1241,6 +1238,36 @@ class Detector:
                 time.sleep(min(remaining, SCAN_INTERVAL))
             return False
 
+        def watch(seconds, match, hit_region, full_scan=False):
+            """Waits `seconds` while re-checking the trigger every SCAN_INTERVAL, then
+            makes sure it's still there. Returns (match, region) from a fresh sighting,
+            or (None, region) if scanning stopped or the trigger was missed
+            GONE_AFTER_MISSES times in a row - at any point, so one that goes away and
+            comes back during the wait is a new appearance (and pays the trigger delay),
+            while a single dropped frame isn't. full_scan re-resolves the whole scan area
+            each time (the window may move or be minimized during a trigger delay)
+            instead of re-checking where the trigger was."""
+            deadline = time.perf_counter() + seconds
+            misses, fresh = 0, False
+            while self.scanning_active.is_set() and not self.stop_event.is_set():
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0 and fresh:
+                    return match, hit_region
+                time.sleep(min(remaining, SCAN_INTERVAL) if remaining > 0 else SCAN_INTERVAL)
+                scan_tick()
+                if full_scan:
+                    seen, seen_region = scan_for_trigger()
+                else:
+                    seen, seen_region = safe_find_match(self._recheck_region(match, hit_region)), hit_region
+                if seen is not None:
+                    match, hit_region, misses, fresh = seen, seen_region, 0, True
+                    continue
+                fresh = False
+                misses += 1
+                if misses >= self.GONE_AFTER_MISSES:
+                    return None, hit_region
+            return None, hit_region
+
         def click_and_check_limit():
             """Clicks once; if that hits the configured limit, pauses and returns True."""
             self._click_once()
@@ -1253,7 +1280,9 @@ class Detector:
         # True while the trigger from the previous burst was still on screen when that
         # burst ended (fixed mode's MAX_CLICKS_PER_BURST re-scan) - that's the same
         # appearance continuing, so the trigger delay mustn't be paid again for it.
+        # Only GONE_AFTER_MISSES misses in a row end it, not one dropped frame.
         trigger_still_showing = False
+        misses_since_burst = 0
 
         try:
             while not self.stop_event.is_set():
@@ -1284,24 +1313,25 @@ class Detector:
                     scan_tick()
                     match, hit_region = scan_for_trigger()
                     if match is None:
-                        trigger_still_showing = False
+                        misses_since_burst += 1
+                        if misses_since_burst >= self.GONE_AFTER_MISSES:
+                            trigger_still_showing = False
                         time.sleep(SCAN_INTERVAL)
                         continue
+                    misses_since_burst = 0
 
                     trigger_delay = 0.0 if trigger_still_showing else random.uniform(
                         self.cfg.get("trigger_delay_min_ms", 0), self.cfg.get("trigger_delay_max_ms", 0)
                     ) / 1000.0
                     if trigger_delay > 0:
                         self.log(f"Trigger detected - clicking in {round(trigger_delay * 1000)}ms...")
-                        if not wait_while_active(trigger_delay):
-                            continue  # paused/quit mid-wait - drop the pending click
-                        # Re-scan everything (not just around the old spot) - the window may
-                        # have moved or been minimized while we waited.
-                        scan_tick()
-                        match, hit_region = scan_for_trigger()
+                        # Keep watching the whole scan area through the delay: the click only
+                        # happens if the trigger stays up for all of it.
+                        match, hit_region = watch(trigger_delay, match, hit_region, full_scan=True)
                         if match is None:
-                            self.log("Trigger disappeared during the delay - not clicking.")
-                            continue
+                            if self.scanning_active.is_set() and not self.stop_event.is_set():
+                                self.log("Trigger disappeared during the delay - not clicking.")
+                            continue  # (or paused/quit mid-wait - either way, no click)
                     else:
                         self.log("Trigger detected - clicking...")
                     self._beep()
@@ -1338,18 +1368,15 @@ class Detector:
                                     break
                             if timed_out:
                                 # Still (probably) there - click again rather than wait longer,
-                                # but only if it's still there once the click delay is over.
-                                sleep_between_clicks()
-                                scan_tick()
-                                match = safe_find_match(self._recheck_region(match, hit_region))
+                                # if it stays there through the click delay.
+                                match, hit_region = watch(click_delay(), match, hit_region)
                                 continue
                             break
-                        sleep_between_clicks()
-                        if burst_clicks >= self.MAX_CLICKS_PER_BURST:
+                        match, hit_region = watch(click_delay(), match, hit_region)
+                        if match is not None and burst_clicks >= self.MAX_CLICKS_PER_BURST:
                             break  # force a fresh full-region scan instead of trusting a stale local match
-                        scan_tick()
-                        match = safe_find_match(self._recheck_region(match, hit_region))
                     trigger_still_showing = match is not None
+                    misses_since_burst = 0
                     self.log(f"Stopped clicking ({self.total_clicks} clicks this session).")
                 except Exception as e:
                     log_error("Unexpected error", e)

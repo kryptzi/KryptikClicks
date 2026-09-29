@@ -13,13 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a random time in that range each time, like a human reaction time, or a
   fixed delay if both are set to the same value. Works with both color and
   image detection. Details:
-  - After the wait it looks again, and **doesn't click if the trigger has
-    disappeared** in the meantime (or the target window was minimized).
+  - It keeps watching during the wait and **only clicks if the trigger stayed
+    up the whole time** (not if it disappeared, or the target window was
+    minimized, in the meantime). A single dropped frame doesn't count as the
+    trigger leaving.
   - Pausing (F6) or quitting (F9) during the wait cancels the pending click
     straight away rather than after the wait finishes.
-  - Only paid once per appearance: fixed-position mode's periodic
-    "re-verify every 5 clicks" re-scan doesn't restart the wait while the
-    trigger has stayed on screen the whole time.
+  - Paid once per appearance: repeat clicks while the trigger stays on
+    screen (including fixed-position mode's "re-verify every 5 clicks"
+    re-scan) don't wait again, but a trigger that goes away and comes back -
+    even within one click delay - counts as new and waits again.
   - Defaults to 0/0 (click immediately), so existing setups behave exactly
     as before. Hidden in Generic mode, which has no trigger to react to.
   - The Simple tab's summary sentence now includes it (e.g. "...clicking
