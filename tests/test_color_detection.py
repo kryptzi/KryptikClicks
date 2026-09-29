@@ -84,3 +84,21 @@ def test_color_mode_never_matches_a_frame_with_zero_target_pixels(kc):
     assert d._find_match_in(_FakeSct(bgra=(0, 0, 0, 255)), region) is None
     # ...while a frame that really is the target color still matches.
     assert d._find_match_in(_FakeSct(bgra=(143, 46, 102, 255)), region) is not None
+
+
+def _three_purple_one_near_purple():
+    # 3 pixels of the target, 1 pixel 30 away on red: within tolerance 40, not 20.
+    img = Image.new("RGB", (5, 1), (110, 96, 98))
+    for x in range(3):
+        img.putpixel((x, 0), (118, 52, 171))
+    img.putpixel((3, 0), (148, 52, 171))
+    return img
+
+
+def test_analyze_color_trigger_counts_at_the_tolerance_it_is_given(kc):
+    # min_color_pixels is half of this count, and live scanning counts with the
+    # configured color_tolerance - so capture must count with that same tolerance.
+    img = _three_purple_one_near_purple()
+
+    assert kc.analyze_color_trigger(img) == ((118, 52, 171), 3)  # default tolerance (20)
+    assert kc.analyze_color_trigger(img, tolerance=40) == ((118, 52, 171), 4)

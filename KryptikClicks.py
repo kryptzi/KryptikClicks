@@ -314,14 +314,15 @@ def count_color_pixels(rgb_array, target_color, tolerance):
     return np.all(diff <= tolerance, axis=-1)
 
 
-def analyze_color_trigger(crop_img):
+def analyze_color_trigger(crop_img, tolerance=None):
     """Given a PIL image crop of the drag-selected trigger, extracts the
     dominant non-background (distinctly colored, not-too-dark) color and how
     many pixels in the crop matched it - the reference signal 'color'
     detection_method looks for during scanning, instead of image template
     correlation. Falls back to treating the whole crop as the target color if
     nothing clears the saturation/brightness floor (e.g. a solid-color
-    capture)."""
+    capture). Pass the color_tolerance scanning will use, so the pixel count
+    (which min_color_pixels is derived from) is measured the same way."""
     import numpy as np
 
     rgb = np.array(crop_img.convert("RGB"))
@@ -335,7 +336,9 @@ def analyze_color_trigger(crop_img):
     if len(candidates) == 0:
         candidates = rgb.reshape(-1, 3)
     target_color = tuple(int(v) for v in np.median(candidates, axis=0))
-    pixel_count = int(count_color_pixels(rgb, target_color, DEFAULT_CONFIG["color_tolerance"]).sum())
+    if tolerance is None:
+        tolerance = DEFAULT_CONFIG["color_tolerance"]
+    pixel_count = int(count_color_pixels(rgb, target_color, tolerance).sum())
     return target_color, pixel_count
 
 
@@ -925,7 +928,9 @@ class Detector:
         import numpy as np
         frame = np.array(shot)  # BGRA
         rgb = frame[:, :, [2, 1, 0]]
-        mask = count_color_pixels(rgb, self.cfg["target_color"], self.cfg.get("color_tolerance", 30))
+        mask = count_color_pixels(
+            rgb, self.cfg["target_color"], self.cfg.get("color_tolerance", DEFAULT_CONFIG["color_tolerance"])
+        )
         count = int(mask.sum())
         if count == 0:
             return region["left"], region["top"], 0
@@ -2178,7 +2183,9 @@ class KryptikClicksGUI:
         else:
             save_capture(box, point, full_img)
             if self.cfg["detection_method"] == "color":
-                target_color, pixel_count = analyze_color_trigger(full_img.crop(box))
+                target_color, pixel_count = analyze_color_trigger(
+                    full_img.crop(box), tolerance=self.cfg["color_tolerance"],
+                )
                 self.cfg["target_color"] = list(target_color)
                 self.cfg["min_color_pixels"] = max(1, int(pixel_count * COLOR_MATCH_FRACTION))
                 save_config(self.cfg)

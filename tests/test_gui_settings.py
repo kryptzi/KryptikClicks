@@ -140,3 +140,20 @@ def test_an_unreadable_config_is_reported_when_the_window_opens(kc, make_gui, mo
 
     assert shown and ".unreadable-" in shown[0]
     assert any("default settings" in line for line in app.log_list.get(0, "end"))
+
+
+def test_color_capture_calibrates_at_the_configured_tolerance(kc, make_gui, monkeypatch):
+    from PIL import Image
+
+    img = Image.new("RGB", (5, 1), (110, 96, 98))
+    for x in range(3):
+        img.putpixel((x, 0), (118, 52, 171))
+    img.putpixel((3, 0), (148, 52, 171))  # within tolerance 40, not 20
+    kc.save_config({"detection_method": "color", "click_position": "cursor", "color_tolerance": 40})
+    monkeypatch.setattr(kc, "run_capture_ui", lambda **kwargs: ((0, 0, 5, 1), None, img))
+    app = make_gui()
+
+    app.on_capture()
+
+    # 4 pixels match at tolerance 40 -> threshold 2; counting at 20 would give 3 -> 1.
+    assert app.cfg["min_color_pixels"] == 2

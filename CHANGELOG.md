@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wherever your mouse already is 200-400ms after it's found.").
 
 ### Fixed
+- **Capturing a color calibrated its pixel threshold at the wrong
+  tolerance.** The minimum pixel count is set to half the matching pixels in
+  your capture, but those were always counted at the default tolerance (20)
+  while scanning uses your configured one - so with a looser tolerance (e.g.
+  40) the threshold came out roughly half as strict as intended, making
+  false triggers from similar colors more likely. Capture now counts with
+  the same tolerance scanning uses. **Recapture your trigger** to benefit if
+  you've changed `color_tolerance`.
 - **Hand-edited settings could quietly break color detection.** Only the
   delay settings were checked properly; a `color_tolerance` of 400 or
   `Infinity` made every pixel count as the trigger color (clicking with
