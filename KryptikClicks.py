@@ -1751,9 +1751,18 @@ class KryptikClicksGUI:
         self.detection_frame = tk.Frame(advanced_tab, bg=c["bg"])
         self.detection_frame.pack(fill="x", padx=20, pady=(16, 0))
         self.detection_method_var = tk.StringVar(value=self.cfg["detection_method"])
-        tk.Label(
-            self.detection_frame, text="Detection method:", bg=c["bg"], fg=c["muted"], font=(FONT, 8)
-        ).pack(anchor="w", pady=(6, 2))
+        self.detection_label = tk.Label(
+            self.detection_frame, text="Detection method:", bg=c["bg"], fg=c["muted"], font=(FONT, 8),
+            cursor="question_arrow",
+        )
+        self.detection_label.pack(anchor="w", pady=(6, 2))
+        self._add_tooltip(
+            self.detection_label,
+            "How it recognizes the trigger. Image template match looks for the picture you "
+            "captured. Color match learns the distinctive color inside your capture box and "
+            "fires when enough pixels of it appear - better for colored text over a changing "
+            "background. Applies immediately.",
+        )
         tk.Radiobutton(
             self.detection_frame, text="Image template match", variable=self.detection_method_var,
             value="template", command=self._on_detection_method_changed, **radio_kwargs,
@@ -1767,9 +1776,17 @@ class KryptikClicksGUI:
         self.scan_scope_frame = tk.Frame(advanced_tab, bg=c["bg"])
         self.scan_scope_frame.pack(fill="x", padx=20)
         self.scan_scope_var = tk.StringVar(value=self.cfg["scan_scope"])
-        tk.Label(
-            self.scan_scope_frame, text="Scan area:", bg=c["bg"], fg=c["muted"], font=(FONT, 8)
-        ).pack(anchor="w", pady=(6, 2))
+        self.scan_area_label = tk.Label(
+            self.scan_scope_frame, text="Scan area:", bg=c["bg"], fg=c["muted"], font=(FONT, 8),
+            cursor="question_arrow",
+        )
+        self.scan_area_label.pack(anchor="w", pady=(6, 2))
+        self._add_tooltip(
+            self.scan_area_label,
+            "Where to look for the trigger: every monitor, or just one window (found by its "
+            "title, so it follows the window if it moves). Limit to Region narrows that to part "
+            "of the window. Applies immediately.",
+        )
         tk.Radiobutton(
             self.scan_scope_frame, text="All monitors", variable=self.scan_scope_var,
             value="all_monitors", command=self._on_scan_scope_changed, **radio_kwargs,
@@ -1885,18 +1902,30 @@ class KryptikClicksGUI:
         )
 
         self.sound_var = tk.BooleanVar(value=self.cfg["sound_enabled"])
-        tk.Checkbutton(
+        self.sound_check = tk.Checkbutton(
             settings, text="Sound alert when it starts clicking", variable=self.sound_var,
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"], activebackground=c["bg"],
             activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=7)
+        )
+        self.sound_check.grid(row=7, column=0, columnspan=2, sticky="w", pady=7)
+        self._add_tooltip(
+            self.sound_check,
+            "Plays a short beep each time it starts clicking on a trigger (or when Generic "
+            "mode starts clicking).",
+        )
 
         self.auto_update_var = tk.BooleanVar(value=self.cfg["auto_update_check"])
-        tk.Checkbutton(
+        self.auto_update_check = tk.Checkbutton(
             settings, text="Check for updates automatically", variable=self.auto_update_var,
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"], activebackground=c["bg"],
             activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=7)
+        )
+        self.auto_update_check.grid(row=8, column=0, columnspan=2, sticky="w", pady=7)
+        self._add_tooltip(
+            self.auto_update_check,
+            "When running the .exe, checks GitHub for a newer release on launch and offers to "
+            "open the download page. It never installs anything by itself.",
+        )
 
         ttk.Button(
             advanced_tab, text="Save Settings", style="Accent.TButton", command=self.on_save_settings

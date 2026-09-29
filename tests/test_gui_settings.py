@@ -450,3 +450,9 @@ def test_not_ready_texts_ask_for_what_the_mode_actually_needs(kc, make_gui, monk
     wanted = "click point" if mode == "generic" else "trigger"
     assert wanted in app.template_var.get().lower()
     assert warnings == [f"Capture a {expected} first."]
+
+
+def test_every_advanced_setting_has_a_hover_tooltip(gui):
+    # The README says to hover any setting for details - these four had none.
+    for widget in (gui.detection_label, gui.scan_area_label, gui.sound_check, gui.auto_update_check):
+        assert widget.bind("<Enter>"), widget
