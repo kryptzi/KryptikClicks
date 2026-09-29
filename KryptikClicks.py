@@ -1493,6 +1493,9 @@ class KryptikClicksGUI:
         self.tk = tk
         self.messagebox = messagebox
         self._quitting = False
+        # Bumped by every F6/Start/Pause, so a pause-and-resume the app does around an
+        # overlay or picker can tell the user toggled meanwhile, and leave it alone.
+        self._user_toggles = 0
         # Calls handed over from other threads (detector worker, hotkey listener,
         # update check) for the Tk thread to run - see _on_ui_thread.
         self._ui_calls = queue.SimpleQueue()
@@ -2118,6 +2121,7 @@ class KryptikClicksGUI:
         # Pause like on_capture does: the overlay is a frozen snapshot that can still
         # show the trigger, and clicking would land mid-drag.
         was_scanning = self.detector.scanning_active.is_set()
+        toggles_before = self._user_toggles
         self.detector.pause_scanning()
         self.root.withdraw()
         try:
@@ -2129,7 +2133,7 @@ class KryptikClicksGUI:
         finally:
             if not self._quitting:
                 self.root.deiconify()
-                if was_scanning and self.detector.ready:
+                if was_scanning and self._user_toggles == toggles_before and self.detector.ready:
                     self.detector.resume_scanning()
         if self._quitting:
             return  # F9 during the overlay - the window is already gone
@@ -2176,10 +2180,12 @@ class KryptikClicksGUI:
         # No clicking while picking (cursor mode would click on the picker itself);
         # resume once it closes, however it closes.
         was_scanning = self.detector.scanning_active.is_set()
+        toggles_before = self._user_toggles
         self.detector.pause_scanning()
 
         def on_picker_closed(event):
-            if event.widget is picker and was_scanning and self.detector.ready:
+            if (event.widget is picker and was_scanning and self._user_toggles == toggles_before
+                    and self.detector.ready):
                 self.detector.resume_scanning()
 
         picker.bind("<Destroy>", on_picker_closed)
@@ -2405,6 +2411,7 @@ class KryptikClicksGUI:
     # --- actions ---
     def on_capture(self):
         was_scanning = self.detector.scanning_active.is_set()
+        toggles_before = self._user_toggles
         self.detector.pause_scanning()
         # The capture flow (how many steps, whether a click point is needed)
         # depends on the currently selected mode/position - apply those now
@@ -2454,12 +2461,13 @@ class KryptikClicksGUI:
                 self.log(f"Captured new {trigger_desc} trigger + click target {point}.")
             else:
                 self.log(f"Captured new {trigger_desc} trigger.")
-        if was_scanning and self.detector.ready:
+        if was_scanning and self._user_toggles == toggles_before and self.detector.ready:
             self.detector.resume_scanning()
         self._refresh_status()
         self._refresh_summary()
 
     def on_toggle(self):
+        self._user_toggles += 1
         if self.detector.scanning_active.is_set():
             self.detector.pause_scanning()
             self.log("Paused.")

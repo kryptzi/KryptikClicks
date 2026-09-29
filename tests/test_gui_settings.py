@@ -474,3 +474,38 @@ def test_generic_capture_with_color_detection_but_no_color_captured(kc, make_gui
     assert (app.detector.click_x, app.detector.click_y) == (50, 60)
     assert "50, 60" in app.template_var.get()
     make_gui()  # ...and it still opens next time
+
+
+def test_a_pause_made_while_the_window_picker_is_open_is_kept(kc, gui, monkeypatch):
+    # F6 works while the picker is open; closing it used to resume regardless.
+    monkeypatch.setattr(kc, "list_visible_windows", lambda exclude_hwnd=None: [])
+    _ready_and_scanning(kc, gui)
+
+    gui.on_choose_window()
+    gui.on_toggle()  # F6: start
+    gui.on_toggle()  # F6: pause again
+    picker = [w for w in gui.root.winfo_children() if w.winfo_class() == "Toplevel"][-1]
+    picker.destroy()
+    gui.root.update()
+
+    assert not gui.detector.scanning_active.is_set()
+
+
+def test_a_pause_made_while_the_region_overlay_is_open_is_kept(kc, gui, monkeypatch):
+    # Same for Limit to Region: F6 is handled inside the overlay's event loop.
+    _ready_and_scanning(kc, gui)
+    gui.scan_window_title_var.set("RuneLite")
+    monkeypatch.setattr(kc, "list_visible_windows", lambda exclude_hwnd=None: [(7, "RuneLite")])
+    monkeypatch.setattr(kc, "get_window_rect", lambda hwnd: {"left": 0, "top": 0, "width": 800, "height": 600})
+    gui.detector.total_clicks = 4
+
+    def overlay_with_f6_pause(**kwargs):
+        gui.on_toggle()  # F6 while the overlay is up: was paused by the overlay -> start
+        gui.on_toggle()  # F6 again -> pause
+        return None, None, None  # Esc
+
+    monkeypatch.setattr(kc, "run_capture_ui", overlay_with_f6_pause)
+
+    gui.on_define_scan_region()
+
+    assert not gui.detector.scanning_active.is_set()
