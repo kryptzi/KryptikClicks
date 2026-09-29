@@ -26,6 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wherever your mouse already is 200-400ms after it's found.").
 
 ### Fixed
+- **Cursor + color mode could click dozens of times a second while the
+  trigger simply stayed on screen.** After a click it waits for the trigger
+  to disappear, but in color mode it only looked in a small box around the
+  *average position of every matching pixel*. With any other similar-colored
+  content on screen (more likely with a looser color tolerance), that
+  average lands on empty space between them, the check read "gone", and the
+  next scan counted it as a new trigger - measured 37 clicks in one second.
+  Color mode now re-checks the whole scan area, the same way it detects.
+- **One missed frame counted as the trigger disappearing (cursor mode).** A
+  single dropped sample (an animation frame, something briefly covering it)
+  ended the wait, and it clicked again ~40ms later, ignoring the click
+  delay. It now takes 3 misses in a row (~60ms) to count as gone. The
+  "still there after 2s, click again" path also re-checks after its delay,
+  so it doesn't click a trigger that vanished during that delay.
 - **One unexpected error could silently stop all detection until restart.**
   Only the screen-capture/matching step itself was protected; anything else
   going wrong in the scan loop (e.g. a Windows display call failing during a

@@ -715,6 +715,12 @@ class Detector:
     # This gives the user a moment to move the mouse away first.
     START_CLICK_GRACE_SECONDS = 0.75
 
+    # In cursor-position mode, how many consecutive re-checks must miss before the
+    # trigger counts as gone. One dropped sample (an animation frame, a brief
+    # occlusion) otherwise ended the wait, and the next full scan re-detected it
+    # as a brand-new trigger and clicked again straight away.
+    GONE_AFTER_MISSES = 3
+
     # mss accumulates Windows GDI resources over a long-running capture loop and
     # gradually slows down; recreating it every this-many scan ticks keeps capture
     # speed steady.
@@ -902,6 +908,16 @@ class Detector:
             bottom = min(monitor["top"] + monitor["height"], top + self.t_h)
             top = max(monitor["top"], bottom - self.t_h)
         return {"left": left, "top": top, "width": right - left, "height": bottom - top}
+
+    def _recheck_region(self, match, hit_region):
+        """Where to look to see whether a detected trigger is still there. Template
+        mode tracks that one spot. Color mode re-counts the whole region it was found
+        in: its match point is the centroid of ALL matching pixels, so with any other
+        target-colored content on screen it can sit on empty space between them,
+        and a small box there would wrongly read as "gone"."""
+        if self.cfg.get("detection_method") == "color":
+            return hit_region
+        return self._local_region_around(match[0], match[1], hit_region)
 
     def run(self):
         """Blocks, running the scan/click loop until stop_event is set."""
@@ -1096,22 +1112,34 @@ class Detector:
                             # region reading as a match well after the real trigger is gone.
                             wait_start = time.monotonic()
                             timed_out = False
-                            while match is not None and self.scanning_active.is_set() and not self.stop_event.is_set():
+                            misses = 0
+                            while self.scanning_active.is_set() and not self.stop_event.is_set():
                                 if time.monotonic() - wait_start > self.CURSOR_MODE_MAX_WAIT_SECONDS:
                                     timed_out = True
                                     break
                                 time.sleep(SCAN_INTERVAL)
                                 scan_tick()
-                                match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
+                                seen = safe_find_match(self._recheck_region(match, hit_region))
+                                if seen is not None:
+                                    match, misses = seen, 0
+                                    continue
+                                misses += 1
+                                if misses >= self.GONE_AFTER_MISSES:
+                                    match = None
+                                    break
                             if timed_out:
+                                # Still (probably) there - click again rather than wait longer,
+                                # but only if it's still there once the click delay is over.
                                 sleep_between_clicks()
-                                continue  # still (probably) there - click again rather than wait longer
+                                scan_tick()
+                                match = safe_find_match(self._recheck_region(match, hit_region))
+                                continue
                             break
                         if burst_clicks >= self.MAX_CLICKS_PER_BURST:
                             break  # force a fresh full-region scan instead of trusting a stale local match
                         sleep_between_clicks()
                         scan_tick()
-                        match = safe_find_match(self._local_region_around(match[0], match[1], hit_region))
+                        match = safe_find_match(self._recheck_region(match, hit_region))
                     trigger_still_showing = match is not None
                     self.log(f"Stopped clicking ({self.total_clicks} clicks this session).")
                 except Exception as e:

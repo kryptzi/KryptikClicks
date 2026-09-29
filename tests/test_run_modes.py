@@ -893,3 +893,92 @@ def test_a_failed_mss_refresh_keeps_the_old_capture_instance(kc, monkeypatch):
 
     assert len(clicks) == 3
     assert grabbed_with and all(s is grabbed_with[0] for s in grabbed_with)  # kept using the original
+
+
+class _SceneSct:
+    """Fake mss instance over one fixed BGRA "screen": grab(region) returns that crop."""
+
+    def __init__(self, screen):
+        self.screen = screen
+        self.monitors = [{"left": 0, "top": 0, "width": screen.shape[1], "height": screen.shape[0]}]
+
+    def grab(self, region):
+        l, t = region["left"], region["top"]
+        return self.screen[t:t + region["height"], l:l + region["width"]].copy()
+
+    def close(self):
+        pass
+
+
+def test_color_cursor_mode_does_not_click_storm_when_other_purple_is_on_screen(kc, monkeypatch):
+    # The color "match point" is the centroid of EVERY matching pixel in the region, and
+    # the post-click re-check only looked in a template-sized box around it. With the
+    # overlay in one corner and some near-purple scenery in the other, that centroid
+    # lands on empty screen between them, the re-check reads "gone", the next full scan
+    # re-detects, and cursor mode clicks again - dozens of times a second.
+    import numpy as np
+    from PIL import Image
+
+    screen = np.zeros((600, 800, 4), dtype=np.uint8)
+    screen[..., 3] = 255
+    screen[20:60, 20:80, :3] = (143, 46, 102)       # the overlay, BGR of RGB(102, 46, 143): 2400 px
+    screen[500:560, 680:780, :3] = (170, 70, 130)   # scenery within tolerance 40, not the trigger: 6000 px
+    # -> all-pixel centroid ~(536, 390): a 60x40 (+60px pad) box there contains neither patch.
+    Image.new("L", (60, 40), 128).save(kc.TEMPLATE_PATH)  # capture crop size -> t_w/t_h
+
+    cfg = kc.load_config()
+    cfg.update({
+        "click_mode": "targeted", "click_position": "cursor", "detection_method": "color",
+        "target_color": [102, 46, 143], "color_tolerance": 40, "min_color_pixels": 1200,
+        "min_delay_ms": 0, "max_delay_ms": 1,
+    })
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    scene = _SceneSct(screen)
+
+    class SceneMss:
+        @staticmethod
+        def mss():
+            return scene
+
+    d.mss = SceneMss
+    monkeypatch.setattr(
+        kc.Detector, "_resolve_scan_regions",
+        lambda self, cached_hwnd, sct: ([{"left": 0, "top": 0, "width": 800, "height": 600}], None, "ok"),
+    )
+    clicks = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(a))
+    monkeypatch.setattr(pyautogui, "position", lambda: (5, 5))
+
+    d.start_scanning()
+    _run_for(d, 1.0)
+
+    assert len(clicks) == 1  # overlay continuously visible: one click, then wait for it to go
+
+
+def test_cursor_mode_does_not_treat_one_missed_sample_as_the_trigger_disappearing(kc, monkeypatch):
+    # A single dropped frame (an animation frame, a brief occlusion) ended the
+    # "wait for it to disappear" phase, and the very next full scan counted as a new
+    # detection - a second click ~40ms after the first, below any configured delay.
+    d = _cursor_mode_detector(kc, monkeypatch, min_delay_ms=150, max_delay_ms=150)
+    monkeypatch.setattr(  # one region, so "the 2nd scoring call" is the 1st post-click re-check
+        kc.Detector, "_resolve_scan_regions",
+        lambda self, cached_hwnd, sct: ([{"left": 0, "top": 0, "width": 100, "height": 100}], None, "ok"),
+    )
+    calls = [0]
+
+    def one_miss(self, sct, region):
+        calls[0] += 1
+        return (0, 0, 0) if calls[0] == 2 else (5, 5, 100)
+
+    monkeypatch.setattr(kc.Detector, "_color_match_score_in", one_miss)
+    clicks = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(a))
+
+    d.start_scanning()
+    _run_for(d, 1.0)  # well under CURSOR_MODE_MAX_WAIT_SECONDS (2s)
+
+    assert len(clicks) == 1
+
