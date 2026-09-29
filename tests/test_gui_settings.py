@@ -362,3 +362,33 @@ def test_update_check_always_reports_back_even_if_it_fails(kc, gui, monkeypatch)
     gui._run_update_check(silent=False)
 
     assert _pump_until(gui, lambda: "couldn't check" in gui.update_status_label.cget("text").lower())
+
+
+def _pump_until_closed(app, timeout=2.0):
+    import time
+    import tkinter as tk
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            app.root.update()
+        except tk.TclError:
+            return  # the window is gone
+        time.sleep(0.01)
+
+
+def test_quitting_while_the_worker_is_still_logging_shows_no_error(gui, monkeypatch):
+    # F9 mid-click: on_quit runs from the UI queue and destroys the window, and the
+    # worker's "Stopped clicking" log landed in the same drain pass - _log_ui on the
+    # destroyed Listbox raised TclError, shown as an "unexpected error" dialog on exit.
+    errors = []
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: errors.append(a))
+
+    def f9_then_worker_log():
+        gui.hotkeys.dispatch(gui.on_quit)
+        gui.log("Stopped clicking (3 clicks this session).")
+
+    _in_thread(f9_then_worker_log)
+    _pump_until_closed(gui)
+
+    assert errors == []

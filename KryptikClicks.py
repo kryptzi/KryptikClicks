@@ -2304,9 +2304,13 @@ class KryptikClicksGUI:
             self._ui_calls.put((fn, args))
 
     def _drain_ui_calls(self):
+        # Once quitting, the window is (being) destroyed: anything still queued - e.g.
+        # the worker's "Stopped clicking" log right after F9 - has nothing to update.
+        if self._quitting:
+            return
         # Reschedule first, so one failing call (reported by Tk) can't stop the pump.
         self.root.after(UI_QUEUE_POLL_MS, self._drain_ui_calls)
-        while True:
+        while not self._quitting:
             try:
                 fn, args = self._ui_calls.get_nowait()
             except queue.Empty:
