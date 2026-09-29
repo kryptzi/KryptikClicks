@@ -102,7 +102,7 @@ QUIT_HOTKEY = "f9"
 # ---------------------------------------------------------------------------
 
 REQUIRED_PACKAGES = ["cv2", "mss", "numpy", "pyautogui", "pynput", "PIL"]
-PIP_INSTALL_CMD = "pip install opencv-python mss numpy pyautogui pynput Pillow"
+PIP_INSTALL_CMD = f'pip install -r "{os.path.join(SCRIPT_DIR, "requirements.txt")}"'
 
 
 def check_dependencies():

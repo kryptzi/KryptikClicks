@@ -94,7 +94,7 @@ when you run from source, and in `%APPDATA%\KryptikClicks` for the `.exe`.
 ## Building the standalone .exe
 
 ```
-pip install pyinstaller
+pip install pyinstaller==6.22.1
 pyinstaller --onefile --windowed --name KryptikClicks --icon=assets/icon.ico --add-data "assets;assets" KryptikClicks.py
 ```
 
@@ -103,7 +103,7 @@ The built exe will be in `dist/KryptikClicks.exe`.
 ## Running the tests
 
 ```
-pip install pytest
+pip install pytest==9.1.1
 pytest
 ```
 

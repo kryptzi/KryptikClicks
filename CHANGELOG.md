@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   window through a queue instead of calling into it directly - which made
   the scanner wait (e.g. up to ~0.6s before a click, measured) whenever the
   window was busy, such as while *Choose Window...* builds its previews.
+- **Dependencies are pinned** in `requirements.txt` to the exact versions
+  this release is tested with, so a fresh install gets the same ones.
 
 ### Fixed
 - **The `.exe` forgot your capture and settings every time it closed.** A

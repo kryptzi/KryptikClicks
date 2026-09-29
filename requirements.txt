@@ -1,6 +1,6 @@
-opencv-python
-mss
-numpy
-pyautogui
-pynput
-Pillow
+opencv-python==5.0.0.93
+mss==10.2.0
+numpy==2.4.6
+pyautogui==0.9.54
+pynput==1.8.2
+Pillow==12.2.0
