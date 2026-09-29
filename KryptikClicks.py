@@ -1221,19 +1221,21 @@ class Detector:
                 return None, None
             return scan_regions(regions)
 
-        def sleep_between_clicks():
-            min_d = self.cfg["min_delay_ms"] / 1000.0
-            max_d = self.cfg["max_delay_ms"] / 1000.0
-            wait_while_active(random.uniform(min_d, max_d))
+        def click_delay():
+            return random.uniform(self.cfg["min_delay_ms"], self.cfg["max_delay_ms"]) / 1000.0
 
-        def wait_while_active(seconds):
-            """Waits up to `seconds`, giving up early if scanning is paused or the app
-            quits. Returns True only if the whole wait elapsed while still active.
-            Sleeps in short time.sleep() slices rather than Event.wait(): on Windows
-            Event.wait rounds up to the ~15ms timer tick, time.sleep doesn't."""
-            deadline = time.monotonic() + seconds
-            while self.scanning_active.is_set() and not self.stop_event.is_set():
-                remaining = deadline - time.monotonic()
+        def sleep_between_clicks():
+            wait_while_active(click_delay())
+
+        def wait_while_active(seconds, still_wanted=lambda: True):
+            """Waits up to `seconds`, giving up early if scanning is paused, the app quits
+            or still_wanted() turns False. Returns True only if the whole wait elapsed.
+            Sleeps in short time.sleep() slices rather than Event.wait() (which rounds up
+            to Windows' ~15ms timer tick), timed with perf_counter: before Python 3.13,
+            time.monotonic() has that same ~15.6ms resolution on Windows."""
+            deadline = time.perf_counter() + seconds
+            while self.scanning_active.is_set() and not self.stop_event.is_set() and still_wanted():
+                remaining = deadline - time.perf_counter()
                 if remaining <= 0:
                     return True
                 time.sleep(min(remaining, SCAN_INTERVAL))
@@ -1265,13 +1267,18 @@ class Detector:
 
                     if self.cfg.get("click_mode", "targeted") == "generic":
                         # No trigger to wait for - click on interval for as long as it's active
-                        # (and still Generic: the Mode radio applies instantly, even mid-run).
+                        # (and still Generic: the Mode radio applies instantly, even mid-run,
+                        # so the interval wait stops as soon as it's switched away).
+                        trigger_still_showing = False  # whatever shows up afterwards is new
                         self._beep()
-                        while (self.scanning_active.is_set() and not self.stop_event.is_set()
-                               and self.cfg.get("click_mode") == "generic"):
+
+                        def still_generic():
+                            return self.cfg.get("click_mode") == "generic"
+
+                        while self.scanning_active.is_set() and not self.stop_event.is_set() and still_generic():
                             if click_and_check_limit():
                                 break
-                            sleep_between_clicks()
+                            wait_while_active(click_delay(), still_generic)
                         continue
 
                     scan_tick()

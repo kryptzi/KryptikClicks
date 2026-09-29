@@ -1065,3 +1065,114 @@ def test_pause_then_start_mid_burst_still_honours_the_start_grace_period(kc, mon
 
     early = [c - restarted_at for c in click_times if restarted_at <= c < restarted_at + 0.74]
     assert early == []
+
+
+# --- Continuity of a trigger across waits, and wait timing (final branch review) ---
+
+def _one_region(kc, monkeypatch):
+    # A single scan region, so every _match_score_in call is one sample in time order.
+    monkeypatch.setattr(
+        kc.Detector, "_resolve_scan_regions",
+        lambda self, cached_hwnd, sct: ([{"left": 0, "top": 0, "width": 100, "height": 100}], None, "ok"),
+    )
+
+
+def test_short_click_delays_stay_short_with_a_coarse_monotonic_clock(kc, monkeypatch):
+    # Before Python 3.13, time.monotonic() on Windows ticks every ~15.6ms; a wait timed
+    # with it stretched every short delay to the next tick (1ms -> ~15ms).
+    import math
+
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(time, "monotonic", lambda: math.floor(real_monotonic() / 0.015625) * 0.015625)
+    cfg = kc.load_config()
+    cfg.update({
+        "click_mode": "generic", "click_position": "fixed", "click_limit": 20,
+        "min_delay_ms": 1, "max_delay_ms": 1,
+    })
+    d = kc.Detector(cfg, log=lambda m: None)
+    d.click_x, d.click_y = 5, 5
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    click_times = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.perf_counter()))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    gaps = sorted(b - a for a, b in zip(click_times, click_times[1:]))
+    assert len(click_times) == 20
+    assert gaps[len(gaps) // 2] < 0.008, gaps
+
+
+
+def test_a_generic_interlude_ends_the_previous_appearance(kc, monkeypatch):
+    # A fixed-mode burst that ended on the burst cap marks the trigger as still showing;
+    # Generic mode never cleared that, so the first detection after switching back to
+    # Targeted clicked with no trigger delay.
+    d = _fixed_template_detector(
+        kc, monkeypatch, min_delay_ms=30, max_delay_ms=30,
+        trigger_delay_min_ms=400, trigger_delay_max_ms=400,
+    )
+    d.click_x, d.click_y = 5, 5
+    monkeypatch.setattr(kc.Detector, "MAX_CLICKS_PER_BURST", 2)
+    _one_region(kc, monkeypatch)
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
+    click_times = []
+
+    def click(*a, **k):
+        click_times.append(time.perf_counter())
+        if len(click_times) == 1:
+            d.cfg["click_mode"] = "generic"  # user flips Mode mid-burst
+
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", click)
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    time.sleep(0.8)
+    d.cfg["click_mode"] = "targeted"  # ...and back
+    switched_back = time.perf_counter()
+    time.sleep(0.8)
+    d.stop_event.set()
+    t.join(2.0)
+
+    early = [c - switched_back for c in click_times if switched_back + 0.06 <= c < switched_back + 0.38]
+    assert early == []
+    assert any(c >= switched_back + 0.38 for c in click_times)
+
+
+
+def test_switching_generic_to_targeted_mid_interval_starts_watching_at_once(kc, monkeypatch):
+    # The Generic loop only re-checked the mode between clicks, so with a long interval
+    # the switch waited out the rest of it (reviewer repro: 3.7s of a 4s interval).
+    cfg = kc.load_config()
+    cfg.update({
+        "click_mode": "generic", "click_position": "cursor",
+        "min_delay_ms": 4000, "max_delay_ms": 4000,
+    })
+    d = kc.Detector(cfg, log=lambda m: None)
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    _one_region(kc, monkeypatch)
+    monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
+    click_times = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.perf_counter()))
+    monkeypatch.setattr(pyautogui, "position", lambda: (5, 5))
+    from PIL import Image
+
+    Image.new("L", (20, 20), 128).save(kc.TEMPLATE_PATH)
+    d.load()
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    time.sleep(0.3)  # first Generic click done, now inside the 4s interval
+    cfg["click_mode"] = "targeted"
+    switched = time.perf_counter()
+    time.sleep(0.6)
+    d.stop_event.set()
+    t.join(2.0)
+
+    after = [c - switched for c in click_times if c > switched]
+    assert after and after[0] < 0.4, after
