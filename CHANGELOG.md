@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   captured frame.
 
 ### Fixed
+- ***Match threshold* showed in Generic mode**, where it does nothing, and a
+  bad value left in a hidden field (e.g. the threshold after switching to
+  Color match) blocked *Save Settings* with an error about a field you
+  couldn't see. Rows now only show where they apply, and hidden fields keep
+  their saved values instead of being validated.
 - **Quitting with F9 while a capture overlay was open showed an
   "unexpected error" pop-up** on the way out. It now just quits.
 - **Clicking carried on underneath *Limit to Region...* and *Choose

@@ -226,3 +226,39 @@ def test_quitting_with_f9_while_an_overlay_is_open_exits_cleanly(kc, gui, monkey
     getattr(gui, flow)()  # must not raise
 
     assert gui.detector.stop_event.is_set()
+
+
+@pytest.mark.parametrize("mode, method, threshold_shown", [
+    ("targeted", "template", True),
+    ("targeted", "color", False),   # color match uses the pixel count, not the threshold
+    ("generic", "template", False),  # generic has no trigger at all
+    ("generic", "color", False),
+])
+def test_match_threshold_only_shows_where_it_applies(gui, mode, method, threshold_shown):
+    gui.detection_method_var.set(method)
+    gui._on_detection_method_changed()
+    gui.mode_var.set(mode)
+    gui._on_mode_changed()
+
+    assert all(_is_shown(w) == threshold_shown for w in gui.thr_row_widgets)
+
+
+def test_a_bad_value_in_a_hidden_field_does_not_block_saving_the_rest(kc, gui, monkeypatch):
+    errors = []
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda title, msg: errors.append(msg))
+    gui.thr_var.set("0")            # invalid, typed while it was visible...
+    gui.trigger_min_var.set("900")  # ...and an invalid trigger range
+    gui.trigger_max_var.set("100")
+    gui.detection_method_var.set("color")
+    gui._on_detection_method_changed()  # hides the threshold
+    gui.mode_var.set("generic")
+    gui._on_mode_changed()              # hides the trigger delay
+    gui.min_var.set("100")
+
+    gui.on_save_settings()
+
+    assert errors == []
+    saved = kc.load_config()
+    assert saved["min_delay_ms"] == 100.0
+    assert saved["match_threshold"] == kc.DEFAULT_CONFIG["match_threshold"]  # hidden: kept as it was
+    assert saved["trigger_delay_min_ms"] == 0

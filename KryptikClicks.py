@@ -1876,17 +1876,33 @@ class KryptikClicksGUI:
             # Save Settings) - put them back above the settings divider where they started.
             self.detection_frame.pack(fill="x", padx=20, pady=(16, 0), before=self.advanced_divider)
             self.scan_scope_frame.pack(fill="x", padx=20, before=self.advanced_divider)
-        # Same for the trigger delay - Generic mode has no trigger to react to.
-        for widget in self.trigger_delay_row_widgets:
-            if is_generic:
-                widget.grid_remove()
-            else:
-                widget.grid()
+        self._apply_settings_row_visibility()
         # The click-position choice (fixed point / current cursor) applies to
         # both modes, so it's always shown - only the trigger-capture
         # requirement (Targeted needs a template; Generic doesn't) differs.
         self._refresh_template_label()
         self._refresh_summary()
+
+    def _threshold_applies(self):
+        # Match threshold only means anything for image template matching - color
+        # match uses the pixel count captured with the trigger, Generic has no trigger.
+        return self.mode_var.get() == "targeted" and self.detection_method_var.get() == "template"
+
+    def _trigger_delay_applies(self):
+        return self.mode_var.get() == "targeted"  # Generic has no trigger to react to
+
+    def _apply_settings_row_visibility(self):
+        """Shows each Advanced settings row only where it does something - in one
+        place, since it depends on both Mode and Detection method."""
+        for widgets, shown in (
+            (self.thr_row_widgets, self._threshold_applies()),
+            (self.trigger_delay_row_widgets, self._trigger_delay_applies()),
+        ):
+            for widget in widgets:
+                if shown:
+                    widget.grid()
+                else:
+                    widget.grid_remove()
 
     def _on_click_position_changed(self):
         # Commit immediately - same reasoning as _on_mode_changed (Simple tab control).
@@ -1899,14 +1915,7 @@ class KryptikClicksGUI:
         # Commit immediately, matching _on_scan_scope_changed's existing pattern.
         self.cfg["detection_method"] = self.detection_method_var.get()
         save_config(self.cfg)
-        # Match threshold only means anything for image template matching -
-        # color match uses the pixel count captured with the trigger instead.
-        show_threshold = self.detection_method_var.get() != "color"
-        for widget in self.thr_row_widgets:
-            if show_threshold:
-                widget.grid()
-            else:
-                widget.grid_remove()
+        self._apply_settings_row_visibility()
         self._refresh_template_label()
         self._refresh_summary()
 
@@ -2270,10 +2279,18 @@ class KryptikClicksGUI:
         self._refresh_status()
 
     def on_save_settings(self):
+        # A hidden field keeps its saved value - an invalid leftover in a field the
+        # user can't currently see mustn't block saving everything else.
+        thr = self.thr_var.get() if self._threshold_applies() else str(self.cfg["match_threshold"])
+        if self._trigger_delay_applies():
+            trigger_min, trigger_max = self.trigger_min_var.get(), self.trigger_max_var.get()
+        else:
+            trigger_min = str(self.cfg["trigger_delay_min_ms"])
+            trigger_max = str(self.cfg["trigger_delay_max_ms"])
         try:
             parsed = parse_settings_input(
-                self.min_var.get(), self.max_var.get(), self.thr_var.get(), self.limit_var.get(),
-                trigger_min_str=self.trigger_min_var.get(), trigger_max_str=self.trigger_max_var.get(),
+                self.min_var.get(), self.max_var.get(), thr, self.limit_var.get(),
+                trigger_min_str=trigger_min, trigger_max_str=trigger_max,
             )
         except ValueError as e:
             self.messagebox.showerror("Invalid settings", str(e))
