@@ -476,6 +476,31 @@ def test_generic_capture_with_color_detection_but_no_color_captured(kc, make_gui
     make_gui()  # ...and it still opens next time
 
 
+def test_saving_resets_hidden_fields_to_what_is_actually_in_effect(kc, gui):
+    # A hidden field's typed text isn't saved (by design) - but it stayed in the form,
+    # showed up again when the row reappeared as if in effect, and the next unrelated
+    # Save quietly applied it.
+    gui.thr_var.set("0.9")
+    gui.trigger_min_var.set("5000")
+    gui.trigger_max_var.set("9000")
+    gui.detection_method_var.set("color")
+    gui._on_detection_method_changed()  # hides the threshold
+    gui.mode_var.set("generic")
+    gui._on_mode_changed()              # hides the trigger delay
+
+    gui.on_save_settings()
+
+    assert float(gui.thr_var.get()) == gui.cfg["match_threshold"] == 0.5
+    assert float(gui.trigger_min_var.get()) == float(gui.trigger_max_var.get()) == 0
+    gui.mode_var.set("targeted")
+    gui._on_mode_changed()
+    gui.detection_method_var.set("template")
+    gui._on_detection_method_changed()
+    gui.on_save_settings()  # an unrelated later Save
+    saved = kc.load_config()
+    assert saved["match_threshold"] == 0.5 and saved["trigger_delay_max_ms"] == 0
+
+
 def test_a_pause_made_while_the_window_picker_is_open_is_kept(kc, gui, monkeypatch):
     # F6 works while the picker is open; closing it used to resume regardless.
     monkeypatch.setattr(kc, "list_visible_windows", lambda exclude_hwnd=None: [])

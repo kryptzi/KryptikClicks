@@ -2512,6 +2512,14 @@ class KryptikClicksGUI:
         self.cfg["scan_scope"] = self.scan_scope_var.get()
         self.cfg["scan_window_title"] = self.scan_window_title_var.get()
         save_config(self.cfg)
+        # Hidden fields weren't saved - put their text back to what's actually in
+        # effect, so it can't reappear later looking applied (or ride along on the
+        # next unrelated Save).
+        if not self._threshold_applies():
+            self.thr_var.set(str(self.cfg["match_threshold"]))
+        if not self._trigger_delay_applies():
+            self.trigger_min_var.set(str(self.cfg["trigger_delay_min_ms"]))
+            self.trigger_max_var.set(str(self.cfg["trigger_delay_max_ms"]))
         self._refresh_status()
         self._refresh_template_label()
         self._refresh_summary()
