@@ -353,3 +353,15 @@ def test_a_captured_color_without_a_usable_pixel_count_needs_recapturing(kc, min
 
     assert cfg["target_color"] is None
     assert warnings and "recapture" in warnings[0].lower()
+
+
+@pytest.mark.parametrize("key", ["click_limit", "min_color_pixels", "color_tolerance", "min_delay_ms"])
+def test_an_integer_too_big_for_a_float_falls_back_instead_of_crashing(kc, key):
+    # math.isfinite() converts ints to float, so a 309+ digit literal raised
+    # OverflowError - caught nowhere, so the app silently never opened.
+    with open(kc.CONFIG_PATH, "w", encoding="utf-8") as f:
+        f.write('{"%s": 1%s}' % (key, "0" * 400))
+
+    cfg = kc.load_config()
+
+    assert cfg[key] == kc.DEFAULT_CONFIG[key]

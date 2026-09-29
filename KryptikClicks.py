@@ -233,8 +233,14 @@ def load_config(on_warning=None):
 def is_finite_number(v):
     """A real, finite number. Excludes bools (True passes isinstance(v, int)) and
     NaN/inf, which slip through naive range checks since every comparison with NaN
-    is False - and json happily loads NaN/Infinity from a config file."""
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+    is False - and json happily loads NaN/Infinity from a config file. An int too big
+    to convert to float (309+ digits) counts as not finite rather than raising."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:
+        return False
 
 
 def is_valid_delay_range(min_ms, max_ms):
