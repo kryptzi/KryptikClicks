@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     wherever your mouse already is 200-400ms after it's found.").
 
 ### Fixed
+- **Choosing a different window kept scanning the old one** as long as the
+  old one stayed open (e.g. two RuneLite clients), even across Pause/Start.
+  It now switches as soon as you pick the new window. (It still keeps
+  following the same window when that window's own title changes, like
+  RuneLite's does on login/logout.)
+- **A scan region could reach outside its window.** A region drawn for a
+  bigger window (or one resized smaller since) scanned whatever was next to
+  it. It's now clipped to the window, falling back to the whole window if
+  it no longer overlaps it at all.
 - **Switching Mode from Generic to Targeted while running kept clicking
   blindly** on the Generic interval with no trigger on screen, until you
   paused. It now switches to watching for the trigger straight away.

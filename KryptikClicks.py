@@ -282,16 +282,21 @@ def compute_scan_region_offset(box_abs, window_rect):
 
 def apply_scan_region_offset(window_rect, scan_region):
     """Re-anchors a captured scan_region offset onto the window's current
-    absolute position. Returns window_rect unchanged if scan_region is None
-    (meaning "scan the whole window")."""
+    absolute position, clipped to the window so a region saved for a bigger (or
+    since-resized) window never scans what's beside it. Returns window_rect
+    unchanged if scan_region is None (meaning "scan the whole window") or if the
+    region doesn't overlap the window at all."""
     if not scan_region:
         return window_rect
-    return {
-        "left": window_rect["left"] + scan_region["left"],
-        "top": window_rect["top"] + scan_region["top"],
-        "width": scan_region["width"],
-        "height": scan_region["height"],
-    }
+    left = max(window_rect["left"], window_rect["left"] + scan_region["left"])
+    top = max(window_rect["top"], window_rect["top"] + scan_region["top"])
+    right = min(window_rect["left"] + window_rect["width"],
+                window_rect["left"] + scan_region["left"] + scan_region["width"])
+    bottom = min(window_rect["top"] + window_rect["height"],
+                 window_rect["top"] + scan_region["top"] + scan_region["height"])
+    if right <= left or bottom <= top:
+        return window_rect
+    return {"left": left, "top": top, "width": right - left, "height": bottom - top}
 
 
 def describe_current_setup(cfg, ready, captured_desc=""):
@@ -744,6 +749,7 @@ class Detector:
         self.scanning_active = threading.Event()
         self.stop_event = threading.Event()
         self._started_at = 0.0
+        self._resolved_window_title = None  # the scan_window_title the cached hwnd was found by
 
     def start_scanning(self):
         self.total_clicks = 0
@@ -874,17 +880,20 @@ class Detector:
         window-scoped scanning existed. In "window" mode, regions is a
         single-item list for the configured target window's live bounds,
         re-resolving cached_hwnd by title whenever it's no longer valid (the
-        target app may have been restarted, getting a new hwnd) rather than
-        caching it long-term. status is "ok", "minimized", or "not_found" - the
+        target app may have been restarted, getting a new hwnd) or a different
+        window has been chosen since. It deliberately doesn't re-check the live
+        window title each tick - RuneLite's changes on login/logout. status is "ok", "minimized", or "not_found" - the
         latter two mean regions is empty, meaning there's nothing to scan this
         tick (idle, not a miss)."""
         if self.cfg.get("scan_scope") != "window":
             monitors = sct.monitors[1:] or [sct.monitors[0]]
             return monitors, None, "ok"
 
+        title = self.cfg.get("scan_window_title", "")
         hwnd = cached_hwnd
-        if hwnd is None or not is_window_valid(hwnd):
-            hwnd = find_window_by_title(list_visible_windows(), self.cfg.get("scan_window_title", ""))
+        if hwnd is None or title != self._resolved_window_title or not is_window_valid(hwnd):
+            hwnd = find_window_by_title(list_visible_windows(), title)
+            self._resolved_window_title = title
         if hwnd is None:
             return [], None, "not_found"
         if is_window_minimized(hwnd):
