@@ -227,8 +227,9 @@ def load_config(on_warning=None):
         # A captured color is only half a calibration: with no usable pixel threshold
         # it would match anything, so treat it as not captured.
         cfg["target_color"] = None
-        if on_warning is not None and cfg["detection_method"] == "color":
-            on_warning("The saved color trigger has no valid pixel count - recapture it.")
+        if on_warning is not None:
+            on_warning("The saved color trigger had no valid pixel count, so it was cleared - "
+                       "recapture it before using Color match.")
     scan_region = cfg.get("scan_region")
     if scan_region is not None:
         if (

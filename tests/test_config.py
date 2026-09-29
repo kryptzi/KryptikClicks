@@ -347,11 +347,13 @@ def test_load_config_turns_whole_number_float_scan_region_values_into_ints(kc):
     assert all(type(v) is int for v in region.values())
 
 
+@pytest.mark.parametrize("method", ["color", "template"])
 @pytest.mark.parametrize("min_pixels", [None, "7175", -1, 0])
-def test_a_captured_color_without_a_usable_pixel_count_needs_recapturing(kc, min_pixels):
+def test_a_captured_color_without_a_usable_pixel_count_needs_recapturing(kc, min_pixels, method):
     # A captured color is only half a calibration - without its pixel threshold the
-    # fallback of 0 would match on anything, so treat it as not captured at all.
-    saved = {"detection_method": "color", "target_color": [102, 46, 143]}
+    # fallback of 0 would match on anything, so treat it as not captured at all. Say so
+    # even if Image match is selected right now: the saved color is gone either way.
+    saved = {"detection_method": method, "target_color": [102, 46, 143]}
     if min_pixels is not None:
         saved["min_color_pixels"] = min_pixels
     kc.save_config(saved)

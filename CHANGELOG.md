@@ -93,8 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accepted as a number (e.g. a repeat limit of 1). These now fall back to
   their defaults, a whole-number scan region like `818.0` is accepted
   instead of making every scan fail, and a saved color with no usable pixel
-  count is treated as not captured (with a "recapture it" warning) rather
-  than matching anything.
+  count is cleared (with a warning to recapture it, whichever detection
+  method is selected) rather than matching anything.
 - **A settings file it couldn't read was silently replaced with defaults.**
   One stray comma from a hand edit, a file re-saved by PowerShell 5.1 (which
   writes UTF-16, or UTF-8 with a BOM), or a half-written file made
@@ -168,7 +168,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at all.** If the saved minimum pixel count was missing or invalid in the
   config file it fell back to 0, and a frame with zero matching pixels
   scores 0 - which counted as a match, so it clicked nonstop on a blank or
-  black screen. A color match now always needs at least one matching pixel.
+  black screen. A saved color without a usable pixel count is now treated as
+  not captured (see *Hand-edited settings...* above), and as a second line of
+  defence a color match always needs at least one matching pixel.
 - **Switching Mode to Generic and back scrambled the Advanced tab.** Hiding
   *Detection method* and *Scan area* for Generic mode and showing them again
   re-added them at the bottom of the tab, below the settings and the Save
