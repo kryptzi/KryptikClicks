@@ -89,3 +89,12 @@ def test_targeted_with_a_fixed_trigger_delay_shows_a_single_value(kc):
         "Watching for the picture you captured anywhere on your screen, "
         "clicking at your saved click spot 300ms after it's found."
     )
+
+
+def test_generic_mode_not_ready_asks_for_a_click_target_not_a_trigger(kc):
+    # Generic mode has no trigger - and its capture button only takes a click point.
+    cfg = kc.load_config()
+    cfg["click_mode"] = "generic"
+    cfg["click_position"] = "fixed"
+
+    assert kc.describe_current_setup(cfg, ready=False) == "Capture a click target to get started."

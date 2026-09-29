@@ -432,3 +432,21 @@ def test_resuming_after_the_window_picker_keeps_the_click_count(kc, gui, monkeyp
     assert gui.detector.scanning_active.is_set()
     assert gui.detector.total_clicks == 6
     assert gui.detector._grace_period_active()  # still gets the start grace, like a fresh Start
+
+
+@pytest.mark.parametrize("mode, position, expected", [
+    ("generic", "fixed", "click target"),
+    ("targeted", "cursor", "trigger"),
+    ("targeted", "fixed", "trigger and click target"),
+])
+def test_not_ready_texts_ask_for_what_the_mode_actually_needs(kc, make_gui, monkeypatch, mode, position, expected):
+    kc.save_config({"click_mode": mode, "click_position": position})
+    warnings = []
+    app = make_gui()
+    monkeypatch.setattr(app.messagebox, "showwarning", lambda title, msg: warnings.append(msg))
+
+    app.on_toggle()  # Start while not ready
+
+    wanted = "click point" if mode == "generic" else "trigger"
+    assert wanted in app.template_var.get().lower()
+    assert warnings == [f"Capture a {expected} first."]

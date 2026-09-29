@@ -58,7 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Capture always made you drag a "trigger" box first and saved it - replacing
   the saved image, or re-calibrating the saved color to whatever you dragged
   over. In Generic mode the button is now *Capture Click Target...* and it
-  only asks for the click spot, leaving the trigger alone.
+  only asks for the click spot, leaving the trigger alone. The "not ready"
+  messages also ask for what the mode actually needs (a click target in
+  Generic mode, not a trigger).
 - ***Match threshold* showed in Generic mode**, where it does nothing, and a
   bad value left in a hidden field (e.g. the threshold after switching to
   Color match) blocked *Save Settings* with an error about a field you

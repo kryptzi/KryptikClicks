@@ -480,6 +480,8 @@ def describe_current_setup(cfg, ready, captured_desc=""):
     up to do, for the Simple tab - so a casual/non-technical viewer doesn't
     need to parse the Advanced tab's settings to understand current behavior."""
     if not ready:
+        if cfg.get("click_mode") == "generic":
+            return "Capture a click target to get started."  # Generic has no trigger
         return "Capture a trigger to get started."
 
     position_phrase = (
@@ -2271,6 +2273,9 @@ class KryptikClicksGUI:
                     f"Reused automatically — recapture only if it stops matching."
                 )
             self.capture_var.set(recapture_label)
+        elif not needs_template:
+            self.template_var.set("No click point captured yet - click below to set it (one-time).")
+            self.capture_var.set(capture_label)
         else:
             self.template_var.set("No trigger captured yet - click below to set it up (one-time).")
             self.capture_var.set(capture_label)
@@ -2395,9 +2400,13 @@ class KryptikClicksGUI:
             self.log("Paused.")
         else:
             if not self.detector.ready:
-                self.messagebox.showwarning(
-                    "Not ready", "Capture a template and click target first."
-                )
+                if self.mode_var.get() == "generic":
+                    needed = "click target"
+                elif self.position_var.get() == "cursor":
+                    needed = "trigger"
+                else:
+                    needed = "trigger and click target"
+                self.messagebox.showwarning("Not ready", f"Capture a {needed} first.")
                 return
             self.detector.start_scanning()
             self.log("Scanning started.")
