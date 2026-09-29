@@ -762,3 +762,53 @@ def test_generic_mode_ignores_the_trigger_delay(kc, monkeypatch):
     _run_until_paused_or_timeout(d, timeout=1.0)
 
     assert len(clicks) == 2
+
+
+def test_quitting_during_a_long_between_clicks_delay_exits_promptly(kc, monkeypatch):
+    # A long Generic-mode interval used to be one uninterruptible time.sleep(), so
+    # F9 (or pausing) had to wait out the rest of it before the worker noticed.
+    cfg = kc.load_config()
+    cfg.update({
+        "click_mode": "generic", "click_position": "fixed",
+        "min_delay_ms": 10000, "max_delay_ms": 10000,
+    })
+    d = kc.Detector(cfg, log=lambda m: None)
+    d.click_x, d.click_y = 5, 5
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    clicks = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(a))
+
+    d.start_scanning()
+    t = threading.Thread(target=d.run, daemon=True)
+    t.start()
+    time.sleep(0.2)  # first click fired, now inside the 10s delay
+    d.stop_event.set()
+    t.join(0.5)
+
+    assert len(clicks) == 1
+    assert not t.is_alive()
+
+
+def test_short_click_delays_stay_short(kc, monkeypatch):
+    # The interruptible waits must keep time.sleep's precision - threading.Event.wait
+    # rounds up to the ~15ms Windows timer tick, which would quietly cut a fast
+    # clicker's rate (1ms delay -> ~15ms) by an order of magnitude.
+    cfg = kc.load_config()
+    cfg.update({
+        "click_mode": "generic", "click_position": "fixed", "click_limit": 20,
+        "min_delay_ms": 1, "max_delay_ms": 1,
+    })
+    d = kc.Detector(cfg, log=lambda m: None)
+    d.click_x, d.click_y = 5, 5
+    monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
+    click_times = []
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.monotonic()))
+
+    d.start_scanning()
+    _run_until_paused_or_timeout(d)
+
+    assert len(click_times) == 20
+    gaps = sorted(b - a for a, b in zip(click_times, click_times[1:]))
+    assert gaps[len(gaps) // 2] < 0.008, gaps  # median gap: ~1-2ms expected, ~15ms if imprecise

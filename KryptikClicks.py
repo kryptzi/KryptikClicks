@@ -75,6 +75,7 @@ COLOR_VALUE_MIN = 80        # HSV value(brightness) floor - a dark pixel can hav
                              # saturation *ratio* purely from being dark, without looking "colorful" at all
 COLOR_MATCH_FRACTION = 0.5  # live pixel count only needs to reach this fraction of the captured count
 SCAN_INTERVAL = 0.02      # seconds between screen scans while idle/watching
+MAX_DELAY_MS = 24 * 60 * 60 * 1000  # any delay setting; far past this, time.sleep() overflows
 TOGGLE_HOTKEY = "f6"
 QUIT_HOTKEY = "f9"
 # ---------------------------------------------------------------------------
@@ -146,8 +147,8 @@ def load_config():
     def is_number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool)
 
-    min_ms, max_ms, thr = cfg.get("min_delay_ms"), cfg.get("max_delay_ms"), cfg.get("match_threshold")
-    if not is_number(min_ms) or not is_number(max_ms) or min_ms < 0 or max_ms < min_ms:
+    thr = cfg.get("match_threshold")
+    if not is_valid_delay_range(cfg.get("min_delay_ms"), cfg.get("max_delay_ms")):
         cfg["min_delay_ms"] = DEFAULT_CONFIG["min_delay_ms"]
         cfg["max_delay_ms"] = DEFAULT_CONFIG["max_delay_ms"]
     if not is_number(thr) or not (0.0 < thr <= 1.0):
@@ -160,12 +161,13 @@ def load_config():
 
 def is_valid_delay_range(min_ms, max_ms):
     """True if (min_ms, max_ms) is safe to feed time.sleep(random.uniform(...)):
-    real finite numbers (not bools), min >= 0 and max >= min. NaN/inf pass naive
-    `< 0` / `max < min` checks but make time.sleep raise on the worker thread."""
+    real finite numbers (not bools) with 0 <= min <= max <= MAX_DELAY_MS. NaN/inf
+    pass naive `< 0` / `max < min` checks but make time.sleep raise on the worker
+    thread, killing detection while the UI still says Scanning."""
     def ok(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
-    return ok(min_ms) and ok(max_ms) and 0 <= min_ms <= max_ms
+    return ok(min_ms) and ok(max_ms) and 0 <= min_ms <= max_ms <= MAX_DELAY_MS
 
 
 def save_config(cfg):
@@ -666,12 +668,12 @@ def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str,
         click_limit = int(float(click_limit_str))
         trigger_min = float(trigger_min_str)
         trigger_max = float(trigger_max_str)
-    except ValueError:
+    except (ValueError, OverflowError):  # int(float("inf")) raises OverflowError
         raise ValueError("Enter valid numbers.")
     if not is_valid_delay_range(trigger_min, trigger_max):
-        raise ValueError("Trigger delay min must be >= 0 and <= trigger delay max.")
-    if min_ms < 0 or max_ms < min_ms:
-        raise ValueError("Min delay must be >= 0 and <= max delay.")
+        raise ValueError("Trigger delay min must be >= 0 and <= trigger delay max (at most 24 hours).")
+    if not is_valid_delay_range(min_ms, max_ms):
+        raise ValueError("Min delay must be >= 0 and <= max delay (at most 24 hours).")
     if not (0.0 < thr <= 1.0):
         raise ValueError("Threshold must be between 0 and 1.")
     if click_limit < 0:
@@ -997,17 +999,19 @@ class Detector:
         def sleep_between_clicks():
             min_d = self.cfg["min_delay_ms"] / 1000.0
             max_d = self.cfg["max_delay_ms"] / 1000.0
-            time.sleep(random.uniform(min_d, max_d))
+            wait_while_active(random.uniform(min_d, max_d))
 
         def wait_while_active(seconds):
             """Waits up to `seconds`, giving up early if scanning is paused or the app
-            quits. Returns True only if the whole wait elapsed while still active."""
+            quits. Returns True only if the whole wait elapsed while still active.
+            Sleeps in short time.sleep() slices rather than Event.wait(): on Windows
+            Event.wait rounds up to the ~15ms timer tick, time.sleep doesn't."""
             deadline = time.monotonic() + seconds
             while self.scanning_active.is_set() and not self.stop_event.is_set():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return True
-                self.stop_event.wait(min(remaining, SCAN_INTERVAL))
+                time.sleep(min(remaining, SCAN_INTERVAL))
             return False
 
         def click_and_check_limit():

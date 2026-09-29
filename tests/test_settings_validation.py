@@ -62,3 +62,27 @@ def test_trigger_delay_min_equal_to_max_is_a_fixed_delay(kc):
 def test_rejects_invalid_trigger_delay(kc, trigger_min, trigger_max):
     with pytest.raises(ValueError):
         kc.parse_settings_input("50", "150", "0.85", "0", trigger_min_str=trigger_min, trigger_max_str=trigger_max)
+
+
+@pytest.mark.parametrize("min_ms, max_ms", [
+    ("nan", "150"),
+    ("50", "inf"),
+    ("50", "1e400"),   # float() turns this into inf
+    ("0", "1e300"),    # finite, but overflows time.sleep
+])
+def test_rejects_non_finite_or_absurd_click_delays(kc, min_ms, max_ms):
+    with pytest.raises(ValueError):
+        kc.parse_settings_input(min_ms, max_ms, "0.85", "0")
+
+
+@pytest.mark.parametrize("limit", ["inf", "nan", "1e400"])
+def test_rejects_non_finite_click_limit_with_a_friendly_error(kc, limit):
+    # int(float("inf")) raises OverflowError, not ValueError - that escaped as a raw
+    # "OverflowError: cannot convert float infinity to integer" dialog.
+    with pytest.raises(ValueError):
+        kc.parse_settings_input("50", "150", "0.85", limit)
+
+
+def test_rejects_absurd_trigger_delay(kc):
+    with pytest.raises(ValueError):
+        kc.parse_settings_input("50", "150", "0.85", "0", trigger_min_str="0", trigger_max_str="1e300")

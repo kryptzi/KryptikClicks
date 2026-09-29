@@ -165,3 +165,23 @@ def test_load_config_resets_invalid_trigger_delay_pair_to_defaults(kc, bad):
     cfg = kc.load_config()
     assert cfg["trigger_delay_min_ms"] == 0
     assert cfg["trigger_delay_max_ms"] == 0
+
+
+@pytest.mark.parametrize("bad", [
+    {"min_delay_ms": float("nan"), "max_delay_ms": 150},
+    {"min_delay_ms": 50, "max_delay_ms": float("inf")},
+    {"min_delay_ms": True, "max_delay_ms": 150},
+    {"min_delay_ms": 0, "max_delay_ms": 1e300},  # finite, but overflows time.sleep
+])
+def test_load_config_resets_non_finite_or_absurd_click_delays(kc, bad):
+    kc.save_config(bad)
+    cfg = kc.load_config()
+    assert cfg["min_delay_ms"] == kc.DEFAULT_CONFIG["min_delay_ms"]
+    assert cfg["max_delay_ms"] == kc.DEFAULT_CONFIG["max_delay_ms"]
+
+
+def test_load_config_keeps_a_long_generic_click_interval(kc):
+    # e.g. an anti-idle click every ~4-5 minutes is a legitimate Generic-mode setup.
+    kc.save_config({"min_delay_ms": 240000, "max_delay_ms": 300000})
+    cfg = kc.load_config()
+    assert (cfg["min_delay_ms"], cfg["max_delay_ms"]) == (240000, 300000)
