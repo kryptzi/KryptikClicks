@@ -863,6 +863,7 @@ def test_a_failed_mss_refresh_keeps_the_old_capture_instance(kc, monkeypatch):
     monkeypatch.setattr(kc.Detector, "MSS_REFRESH_INTERVAL", 1)  # refresh on every scan tick
     real_mss = d.mss
     made = [0]
+    closed = set()
 
     class FlakyMssModule:
         @staticmethod
@@ -870,17 +871,25 @@ def test_a_failed_mss_refresh_keeps_the_old_capture_instance(kc, monkeypatch):
             made[0] += 1
             if made[0] > 1:
                 raise RuntimeError("simulated CreateCompatibleDC failure")
-            return real_mss.mss()
+            instance = real_mss.mss()
+            real_close = instance.close
+
+            def recording_close():
+                closed.add(id(instance))
+                real_close()
+
+            instance.close = recording_close
+            return instance
 
     d.mss = FlakyMssModule
     monkeypatch.setattr(
         kc.Detector, "_resolve_scan_regions",
         lambda self, cached_hwnd, sct: ([{"left": 0, "top": 0, "width": 100, "height": 100}], None, "ok"),
     )
-    grabbed_with = []
+    used = []
 
     def scoring(self, sct, region):
-        grabbed_with.append(sct)
+        used.append((sct, id(sct) in closed))  # was it already closed when used?
         return (5, 5, 1.0)
 
     monkeypatch.setattr(kc.Detector, "_match_score_in", scoring)
@@ -892,7 +901,8 @@ def test_a_failed_mss_refresh_keeps_the_old_capture_instance(kc, monkeypatch):
     _run_until_paused_or_timeout(d)
 
     assert len(clicks) == 3
-    assert grabbed_with and all(s is grabbed_with[0] for s in grabbed_with)  # kept using the original
+    assert used and all(sct is used[0][0] for sct, _ in used)  # kept using the original...
+    assert not any(was_closed for _, was_closed in used)      # ...and it was still open
 
 
 class _SceneSct:
