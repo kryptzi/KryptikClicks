@@ -365,3 +365,71 @@ def test_an_integer_too_big_for_a_float_falls_back_instead_of_crashing(kc, key):
     cfg = kc.load_config()
 
     assert cfg[key] == kc.DEFAULT_CONFIG[key]
+
+
+def _lock_exclusively(path, seconds):
+    """Opens `path` with no sharing (as antivirus/backup/sync tools can), so any other
+    open of it fails with PermissionError until the handle is closed `seconds` later."""
+    import ctypes
+    import threading
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                     wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    GENERIC_READ, OPEN_EXISTING = 0x80000000, 3
+    handle = kernel32.CreateFileW(path, GENERIC_READ, 0, None, OPEN_EXISTING, 0, None)
+    assert handle and handle != ctypes.c_void_p(-1).value, ctypes.get_last_error()
+    timer = threading.Timer(seconds, kernel32.CloseHandle, args=(handle,))
+    timer.start()
+    return timer
+
+
+OWNER_CALIBRATION = {"detection_method": "color", "target_color": [102, 46, 143], "min_color_pixels": 7175}
+
+
+def test_a_briefly_locked_config_is_read_once_the_lock_clears(kc):
+    kc.save_config(OWNER_CALIBRATION)
+    warnings = []
+    lock = _lock_exclusively(kc.CONFIG_PATH, 0.1)
+
+    cfg = kc.load_config(on_warning=warnings.append)
+    lock.join()
+
+    assert cfg["target_color"] == [102, 46, 143]
+    assert warnings == []
+    assert _backups(kc) == []
+
+
+def test_a_config_that_cant_be_read_or_copied_is_never_overwritten(kc):
+    # If the file can be neither read nor set aside, the defaults the app falls back
+    # to used to be saved straight over it on startup - losing the calibration for good.
+    kc.save_config(OWNER_CALIBRATION)
+    with open(kc.CONFIG_PATH, "rb") as f:
+        original = f.read()
+    warnings = []
+    lock = _lock_exclusively(kc.CONFIG_PATH, 1.0)
+
+    cfg = kc.load_config(on_warning=warnings.append)
+    kc.save_config(cfg)  # what the GUI does at startup
+    lock.join()
+    kc.save_config(cfg)  # ...and on the next change, once the lock is gone
+
+    with open(kc.CONFIG_PATH, "rb") as f:
+        assert f.read() == original
+    assert warnings and "won't be saved" in warnings[0]
+
+
+def test_saving_works_again_after_a_later_successful_load(kc):
+    kc.save_config(OWNER_CALIBRATION)
+    lock = _lock_exclusively(kc.CONFIG_PATH, 1.0)
+    kc.load_config()
+    lock.join()
+
+    cfg = kc.load_config()  # readable now
+    cfg["min_color_pixels"] = 9000
+    kc.save_config(cfg)
+
+    assert kc.load_config()["min_color_pixels"] == 9000

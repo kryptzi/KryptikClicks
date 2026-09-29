@@ -125,8 +125,17 @@ def read_config_file(path):
     (PowerShell 5.1's Set-Content/Out-File add one) and, for files written by older
     versions or hand-edited in the Windows locale encoding, falls back to that.
     Raises OSError/ValueError if it can't be read."""
-    with open(path, "rb") as f:
-        raw = f.read()
+    # Antivirus/backup/sync tools can hold the file without read sharing for a
+    # moment - retry briefly rather than treat a readable config as unreadable.
+    for attempt in range(5):
+        try:
+            with open(path, "rb") as f:
+                raw = f.read()
+            break
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05)
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -153,18 +162,30 @@ def set_aside_unreadable_config():
         return None
 
 
+# True while the config file on disk could be neither read nor copied aside: then
+# save_config leaves it alone, rather than replace settings nobody has a copy of
+# with the defaults the app fell back to.
+_config_write_blocked = False
+
+
 def load_config(on_warning=None):
     """Loads and validates the config file over DEFAULT_CONFIG. If the file exists
     but can't be read, it's set aside and on_warning(message) is told why."""
+    global _config_write_blocked
     cfg = dict(DEFAULT_CONFIG)
+    _config_write_blocked = False
     if os.path.exists(CONFIG_PATH):
         try:
             cfg.update(read_config_file(CONFIG_PATH))
         except (OSError, ValueError) as e:
             backup = set_aside_unreadable_config()
+            _config_write_blocked = backup is None
             if on_warning is not None:
-                kept = (f"Your old file was kept as {os.path.basename(backup)}." if backup
-                        else "Couldn't keep a copy of the old file.")
+                if backup:
+                    kept = f"Your old file was kept as {os.path.basename(backup)}."
+                else:
+                    kept = ("It couldn't be copied either, so it's being left exactly as it is - "
+                            "changes you make won't be saved. Restart KryptikClicks to try again.")
                 on_warning(f"Couldn't read {os.path.basename(CONFIG_PATH)} ({e}), so the default "
                            f"settings are in use. {kept}")
     if cfg.get("click_button") not in CLICK_BUTTONS:
@@ -254,6 +275,8 @@ def is_valid_delay_range(min_ms, max_ms):
 def save_config(cfg):
     """Writes to a temp file and swaps it into place, so a crash or kill mid-write
     can't leave a truncated config behind (open("w") empties the file at once)."""
+    if _config_write_blocked:
+        return  # see load_config: the file on disk is the only copy of those settings
     tmp = CONFIG_PATH + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
