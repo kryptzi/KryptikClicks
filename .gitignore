@@ -2,6 +2,9 @@
 trigger_template.png
 click_target.txt
 kryptikclicks_config.json
+# its atomic-save temp file and set-aside copies of an unreadable one
+kryptikclicks_config.json.tmp
+kryptikclicks_config.json.unreadable-*
 
 # Python
 __pycache__/
