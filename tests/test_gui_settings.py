@@ -392,3 +392,25 @@ def test_quitting_while_the_worker_is_still_logging_shows_no_error(gui, monkeypa
     _pump_until_closed(gui)
 
     assert errors == []
+
+
+@pytest.mark.parametrize("failure", ["offline", "rate limited"])
+def test_an_update_check_that_cannot_reach_github_says_so(gui, monkeypatch, failure):
+    # fetch_latest_release swallowed every error and returned None, which reads as
+    # "no newer release" - so offline or rate-limited showed "You're up to date."
+    import io
+    import urllib.error
+    import urllib.request
+
+    def unreachable(*args, **kwargs):
+        if failure == "offline":
+            raise urllib.error.URLError("getaddrinfo failed")
+        raise urllib.error.HTTPError("https://api.github.com", 403, "rate limit exceeded", {}, io.BytesIO())
+
+    monkeypatch.setattr(urllib.request, "urlopen", unreachable)
+    gui.update_status_label.config(text="Checking for updates...")
+
+    gui._run_update_check(silent=False)
+
+    assert _pump_until(gui, lambda: gui.update_status_label.cget("text") != "Checking for updates...")
+    assert "couldn't check" in gui.update_status_label.cget("text").lower()

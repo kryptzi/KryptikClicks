@@ -351,18 +351,17 @@ def find_update(release, current_version):
 
 
 def fetch_latest_release():
-    """Fetches the latest GitHub release info. Returns the parsed JSON dict, or None on
-    any network/parsing error - being offline or rate-limited shouldn't crash the app."""
+    """Fetches the latest GitHub release info as parsed JSON. Raises on any network,
+    HTTP or parsing error rather than returning None, so the caller can tell
+    "couldn't check" (offline, rate-limited) apart from "no newer release"; the
+    update-check thread catches it, so it never crashes the app."""
     import urllib.request
 
-    try:
-        req = urllib.request.Request(
-            GITHUB_LATEST_RELEASE_API, headers={"Accept": "application/vnd.github+json"}
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return None
+    req = urllib.request.Request(
+        GITHUB_LATEST_RELEASE_API, headers={"Accept": "application/vnd.github+json"}
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
 def check_for_update(current_version, fetcher=fetch_latest_release):
