@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Switching Mode to Generic and back scrambled the Advanced tab.** Hiding
+  *Detection method* and *Scan area* for Generic mode and showing them again
+  re-added them at the bottom of the tab, below the settings and the Save
+  Settings button (and without their original spacing). They now go back to
+  their original place at the top.
 - **Cursor-position mode ignored the configured click delay.** Repeat clicks
   in cursor-position mode (firing again after the max-wait-for-disappearance
   timeout while the trigger is still visible) never applied `min_delay_ms`/

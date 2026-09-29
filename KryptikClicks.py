@@ -1475,7 +1475,8 @@ class KryptikClicksGUI:
         clear_region_link.pack(side="right", padx=(0, 8))
         clear_region_link.bind("<Button-1>", lambda e: self.on_clear_scan_region())
 
-        tk.Frame(advanced_tab, bg=c["border"], height=1).pack(fill="x", padx=20, pady=(10, 0))
+        self.advanced_divider = tk.Frame(advanced_tab, bg=c["border"], height=1)
+        self.advanced_divider.pack(fill="x", padx=20, pady=(10, 0))
         tk.Label(
             advanced_tab, text="SETTINGS", bg=c["bg"], fg=c["muted"], font=(FONT, 8, "bold"),
         ).pack(anchor="w", padx=20, pady=(16, 8))
@@ -1609,11 +1610,14 @@ class KryptikClicksGUI:
         # Detection method/Scan area are meaningless in Generic mode (Detector.ready/run()
         # never consult them there) - hide them so Advanced doesn't show inert controls.
         is_generic = self.mode_var.get() == "generic"
-        for frame in (self.detection_frame, self.scan_scope_frame):
-            if is_generic:
-                frame.pack_forget()
-            else:
-                frame.pack(fill="x", padx=20)
+        if is_generic:
+            self.detection_frame.pack_forget()
+            self.scan_scope_frame.pack_forget()
+        elif not self.detection_frame.winfo_manager():
+            # A plain pack() after pack_forget() appends to the END of the tab (below
+            # Save Settings) - put them back above the settings divider where they started.
+            self.detection_frame.pack(fill="x", padx=20, pady=(16, 0), before=self.advanced_divider)
+            self.scan_scope_frame.pack(fill="x", padx=20, before=self.advanced_divider)
         # The click-position choice (fixed point / current cursor) applies to
         # both modes, so it's always shown - only the trigger-capture
         # requirement (Targeted needs a template; Generic doesn't) differs.
