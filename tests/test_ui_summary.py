@@ -56,3 +56,45 @@ def test_generic_cursor_position(kc):
     result = kc.describe_current_setup(cfg, ready=True)
 
     assert result == "Clicking automatically wherever your mouse already is every 100-350ms."
+
+
+def test_targeted_with_a_trigger_delay_range_mentions_it(kc):
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["scan_scope"] = "window"
+    cfg["scan_window_title"] = "RuneLite"
+    cfg["click_position"] = "cursor"
+    cfg["trigger_delay_min_ms"] = 200
+    cfg["trigger_delay_max_ms"] = 400.0
+
+    result = kc.describe_current_setup(cfg, ready=True, captured_desc="the color you captured")
+
+    assert result == (
+        'Watching for the color you captured in "RuneLite", '
+        "clicking wherever your mouse already is 200-400ms after it's found."
+    )
+
+
+def test_targeted_with_a_fixed_trigger_delay_shows_a_single_value(kc):
+    cfg = kc.load_config()
+    cfg["click_mode"] = "targeted"
+    cfg["scan_scope"] = "all_monitors"
+    cfg["click_position"] = "fixed"
+    cfg["trigger_delay_min_ms"] = 300
+    cfg["trigger_delay_max_ms"] = 300
+
+    result = kc.describe_current_setup(cfg, ready=True, captured_desc="the picture you captured")
+
+    assert result == (
+        "Watching for the picture you captured anywhere on your screen, "
+        "clicking at your saved click spot 300ms after it's found."
+    )
+
+
+def test_generic_mode_not_ready_asks_for_a_click_target_not_a_trigger(kc):
+    # Generic mode has no trigger - and its capture button only takes a click point.
+    cfg = kc.load_config()
+    cfg["click_mode"] = "generic"
+    cfg["click_position"] = "fixed"
+
+    assert kc.describe_current_setup(cfg, ready=False) == "Capture a click target to get started."

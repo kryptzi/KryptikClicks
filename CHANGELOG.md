@@ -7,6 +7,185 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-29
+
+### Added
+- **Trigger delay.** New *Trigger delay min/max (ms)* settings (Advanced tab)
+  add a wait between the moment a trigger is spotted and the first click -
+  a random time in that range each time, like a human reaction time, or a
+  fixed delay if both are set to the same value. Works with both color and
+  image detection. Details:
+  - It keeps watching during the wait and **only clicks if the trigger stayed
+    up the whole time** (not if it disappeared, or the target window was
+    minimized, in the meantime). A single dropped frame doesn't count as the
+    trigger leaving.
+  - Pausing (F6) or quitting (F9) during the wait cancels the pending click
+    straight away rather than after the wait finishes.
+  - Paid once per appearance: repeat clicks while the trigger stays on
+    screen (including fixed-position mode's "re-verify every 5 clicks"
+    re-scan) don't wait again, but a trigger that goes away and comes back -
+    even within one click delay - counts as new and waits again.
+  - Defaults to 0/0 (click immediately), so existing setups behave exactly
+    as before. Hidden in Generic mode, which has no trigger to react to.
+  - The Simple tab's summary sentence now includes it (e.g. "...clicking
+    wherever your mouse already is 200-400ms after it's found.").
+
+### Changed
+- **Color detection is ~11x faster** (7.6ms -> 0.7ms per scan of an
+  818x659 area, 28ms -> 2.3ms for a full 1080p monitor, measured on real
+  screen captures), with bit-for-bit identical results. That means less CPU
+  taken from the game and a trigger noticed a few ms sooner on each scan.
+  Both detection methods also stopped making a needless copy of every
+  captured frame, and OpenCV now runs single-threaded: its thread pool was
+  spin-waiting after every scan, so a color scan now costs about 0.55ms of
+  CPU instead of 3.35ms (same speed, same results).
+- **The clicker no longer waits on the window.** Activity-log messages from
+  the background scanner, F6/F9, and the update check are now handed to the
+  window through a queue instead of calling into it directly - which made
+  the scanner wait (e.g. up to ~0.6s before a click, measured) whenever the
+  window was busy, such as while *Choose Window...* builds its previews.
+- **Dependencies are pinned** in `requirements.txt` to the exact versions
+  this release is tested with, so a fresh install gets the same ones.
+- **README brought up to date** with the app: the Simple/Advanced tabs, color
+  detection, scan area, which settings apply instantly vs. on Save, how
+  fixed-point and cursor-position clicking actually pace themselves, the
+  correct default match threshold (0.50, not 0.85) and current button names.
+
+### Fixed
+- **The `.exe` forgot your capture and settings every time it closed.** A
+  one-file build runs from a temporary folder that Windows deletes on exit,
+  and that's where it was saving them. The `.exe` now keeps them in
+  `%APPDATA%\KryptikClicks` (running from source is unchanged: next to
+  `KryptikClicks.py`).
+- **An unexpected update-check response could leave "Checking for
+  updates..." showing forever** (e.g. a release tagged like `v1.7.0-beta`).
+  Anything that isn't a plain newer version with a downloadable `.exe` now
+  simply counts as "no update", and a failed check says so.
+- **Setting a click point in Generic mode overwrote your Targeted trigger.**
+  Capture always made you drag a "trigger" box first and saved it - replacing
+  the saved image, or re-calibrating the saved color to whatever you dragged
+  over. In Generic mode the button is now *Capture Click Target...* and it
+  only asks for the click spot, leaving the trigger alone. The "not ready"
+  messages also ask for what the mode actually needs (a click target in
+  Generic mode, not a trigger).
+- ***Match threshold* showed in Generic mode**, where it does nothing, and a
+  bad value left in a hidden field (e.g. the threshold after switching to
+  Color match) blocked *Save Settings* with an error about a field you
+  couldn't see. Rows now only show where they apply, and hidden fields keep
+  their saved values instead of being validated.
+- **Quitting with F9 while a capture overlay was open showed an
+  "unexpected error" pop-up** on the way out. It now just quits.
+- **Clicking carried on underneath *Limit to Region...* and *Choose
+  Window...*.** The region overlay is a frozen snapshot that can still show
+  the trigger, so it kept clicking - in cursor mode, right where you were
+  dragging or picking. Both now pause clicking while open and resume
+  afterwards (including after Esc/Cancel), like capturing a trigger already
+  did. Resuming after any of the three now keeps the click count, so the
+  *Repeat limit* still counts the clicks from before (it used to start over).
+- **Capturing a color calibrated its pixel threshold at the wrong
+  tolerance.** The minimum pixel count is set to half the matching pixels in
+  your capture, but those were always counted at the default tolerance (20)
+  while scanning uses your configured one - so with a looser tolerance (e.g.
+  40) the threshold came out roughly half as strict as intended, making
+  false triggers from similar colors more likely. Capture now counts with
+  the same tolerance scanning uses. **Recapture your trigger** to benefit if
+  you've changed `color_tolerance`.
+- **Hand-edited settings could quietly break color detection.** Only the
+  delay settings were checked properly; a `color_tolerance` of 400 or
+  `Infinity` made every pixel count as the trigger color (clicking with
+  nothing on screen), `NaN` silently disabled detection, and `true` was
+  accepted as a number (e.g. a repeat limit of 1). These now fall back to
+  their defaults, a whole-number scan region like `818.0` is accepted
+  instead of making every scan fail, and a saved color with no usable pixel
+  count is cleared (with a warning to recapture it, whichever detection
+  method is selected) rather than matching anything.
+- **A settings file it couldn't read was silently replaced with defaults.**
+  One stray comma from a hand edit, a file re-saved by PowerShell 5.1 (which
+  writes UTF-16, or UTF-8 with a BOM), or a half-written file made
+  it quietly start from default settings - and since it saves on startup,
+  your captured color, window and region were then overwritten for good. It
+  now reads those encodings fine, keeps an unreadable file as
+  `kryptikclicks_config.json.unreadable-<date-time>`, and tells you so (in
+  the Activity panel and a pop-up). A file that's only briefly locked by
+  another program (antivirus, backup, sync) is simply read once it's free,
+  and one that can be neither read nor copied is left untouched for that
+  session instead of being replaced. Settings are also written to a
+  temporary file first and then swapped in, so a crash or
+  power cut mid-save can no longer leave a half-written settings file.
+- **Choosing a different window kept scanning the old one** as long as the
+  old one stayed open (e.g. two RuneLite clients), even across Pause/Start.
+  It now switches as soon as you pick the new window. (It still keeps
+  following the same window when that window's own title changes, like
+  RuneLite's does on login/logout.)
+- **A scan region could reach outside its window.** A region drawn for a
+  bigger window (or one resized smaller since) scanned whatever was next to
+  it. It's now clipped to the window, falling back to the whole window if
+  it no longer overlaps it at all.
+- **Switching Mode from Generic to Targeted while running kept clicking
+  blindly** on the Generic interval with no trigger on screen, until you
+  paused. It now switches to watching for the trigger straight away.
+- **The app silently failed to open if a saved capture file was damaged**
+  (e.g. an empty `click_target.txt` after a crash mid-save). It tried to
+  log the "recapture needed" warning before its window existed and crashed
+  - invisibly, since the shortcut runs without a console. It now opens and
+  shows the warning in the Activity panel.
+- **Cursor + color mode could click dozens of times a second while the
+  trigger simply stayed on screen.** After a click it waits for the trigger
+  to disappear, but in color mode it only looked in a small box around the
+  *average position of every matching pixel*. With any other similar-colored
+  content on screen (more likely with a looser color tolerance), that
+  average lands on empty space between them, the check read "gone", and the
+  next scan counted it as a new trigger - measured 37 clicks in one second.
+  Color mode now re-checks the whole scan area, the same way it detects.
+- **One missed frame counted as the trigger disappearing (cursor mode).** A
+  single dropped sample (an animation frame, something briefly covering it)
+  ended the wait, and it clicked again ~40ms later, ignoring the click
+  delay. It now takes 3 misses in a row (~60ms) to count as gone. The
+  "still there after 2s, click again" path also re-checks after its delay,
+  so it doesn't click a trigger that vanished during that delay.
+- **Fixed-position mode double-clicked every 6th click.** After 5 clicks
+  it re-verifies the trigger with a fresh full scan, but skipped the click
+  delay before doing so - so the next click came ~1ms after the previous one.
+- **One unexpected error could silently stop all detection until restart.**
+  Only the screen-capture/matching step itself was protected; anything else
+  going wrong in the scan loop (e.g. a Windows display call failing during a
+  monitor sleep/wake or resolution change) ended the background scanner
+  while the status kept showing *Scanning*. It's now logged to the Activity
+  panel and scanning carries on. The periodic capture-engine refresh also
+  keeps the old one if creating the new one fails, instead of closing it
+  first and being left with none.
+- **Typing `nan` or `inf` into a delay field silently broke clicking.**
+  Those pass as numbers, got saved, and then crashed the background clicker
+  on its first wait - the status kept saying *Scanning* but nothing ever
+  clicked again, on every launch, and in Generic mode the window wouldn't
+  even open. Delays must now be real numbers between 0 and 24 hours (in the
+  settings form and when loading the config file), and `inf` in *Repeat
+  limit* shows the normal "Enter valid numbers" message instead of a raw
+  error.
+- **Pausing or quitting during a long click delay had to wait it out.** With
+  e.g. a multi-minute Generic-mode interval, F6/F9 only took effect when the
+  current delay ended. The wait now notices pause/quit within ~20ms, while
+  keeping short delays exactly as precise as before. This also stops a quick
+  Pause-then-Start from resuming the old click burst inside the new start's
+  0.75s grace period (which could click the Start button and pause again).
+- **Color match could "see" the trigger on a screen with none of its color
+  at all.** If the saved minimum pixel count was missing or invalid in the
+  config file it fell back to 0, and a frame with zero matching pixels
+  scores 0 - which counted as a match, so it clicked nonstop on a blank or
+  black screen. A saved color without a usable pixel count is now treated as
+  not captured (see *Hand-edited settings...* above), and as a second line of
+  defence a color match always needs at least one matching pixel.
+- **Switching Mode to Generic and back scrambled the Advanced tab.** Hiding
+  *Detection method* and *Scan area* for Generic mode and showing them again
+  re-added them at the bottom of the tab, below the settings and the Save
+  Settings button (and without their original spacing). They now go back to
+  their original place at the top.
+- **Cursor-position mode ignored the configured click delay.** Repeat clicks
+  in cursor-position mode (firing again after the max-wait-for-disappearance
+  timeout while the trigger is still visible) never applied `min_delay_ms`/
+  `max_delay_ms` - that setting had zero effect for anyone using cursor
+  position, only fixed-position mode's burst re-click loop honored it.
+
 ## [1.6.2] - 2026-08-17
 
 ### Changed
@@ -329,7 +508,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.3...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.2...v1.7.0
+[1.6.2]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.3...v1.6.0
 [1.5.3]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.1...v1.5.3
 [1.5.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.4.1...v1.5.0
