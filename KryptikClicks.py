@@ -31,7 +31,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -73,6 +73,7 @@ DEFAULT_CONFIG = {
     "max_delay_ms": 150,
     "trigger_delay_min_ms": 0,
     "trigger_delay_max_ms": 0,
+    "reclick_wait_ms": 2000,
     "match_threshold": 0.50,
     "click_button": "left",
     "click_mode": "targeted",
@@ -253,6 +254,9 @@ def load_config(on_warning=None):
     if not is_valid_delay_range(cfg.get("trigger_delay_min_ms"), cfg.get("trigger_delay_max_ms")):
         cfg["trigger_delay_min_ms"] = DEFAULT_CONFIG["trigger_delay_min_ms"]
         cfg["trigger_delay_max_ms"] = DEFAULT_CONFIG["trigger_delay_max_ms"]
+    reclick = cfg.get("reclick_wait_ms")
+    if not is_finite_number(reclick) or not 0 <= reclick <= MAX_DELAY_MS:
+        cfg["reclick_wait_ms"] = DEFAULT_CONFIG["reclick_wait_ms"]
     return cfg
 
 
@@ -852,7 +856,7 @@ def capture_template_cli():
 
 
 def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str,
-                         trigger_min_str="0", trigger_max_str="0"):
+                         trigger_min_str="0", trigger_max_str="0", reclick_wait_str="2000"):
     """Parses/validates the settings-form text fields. Raises ValueError with a
     user-facing message on invalid input; otherwise returns the parsed values."""
     try:
@@ -862,12 +866,15 @@ def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str,
         click_limit = int(float(click_limit_str))
         trigger_min = float(trigger_min_str)
         trigger_max = float(trigger_max_str)
+        reclick_wait = float(reclick_wait_str)
     except (ValueError, OverflowError):  # int(float("inf")) raises OverflowError
         raise ValueError("Enter valid numbers.")
     if not is_valid_delay_range(trigger_min, trigger_max):
         raise ValueError("Trigger delay min must be >= 0 and <= trigger delay max (at most 24 hours).")
     if not is_valid_delay_range(min_ms, max_ms):
         raise ValueError("Min delay must be >= 0 and <= max delay (at most 24 hours).")
+    if not is_finite_number(reclick_wait) or not 0 <= reclick_wait <= MAX_DELAY_MS:
+        raise ValueError("Re-click wait must be between 0 and 24 hours (in ms).")
     if not (0.0 < thr <= 1.0):
         raise ValueError("Threshold must be between 0 and 1.")
     if click_limit < 0:
@@ -879,6 +886,7 @@ def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str,
         "click_limit": click_limit,
         "trigger_delay_min_ms": trigger_min,
         "trigger_delay_max_ms": trigger_max,
+        "reclick_wait_ms": reclick_wait,
     }
 
 
@@ -886,12 +894,6 @@ class Detector:
     """Loads the template/target and does the screen-matching + clicking work.
     Shared by both the GUI and the headless CLI mode."""
 
-    # In cursor-position mode, the longest we'll wait for the local region around
-    # a detected trigger to read as "gone" before clicking again anyway. Ambient
-    # game content near the trigger (not the trigger itself) can keep scoring as
-    # a match indefinitely, which without this cap can starve real re-clicks for
-    # a very long time (observed: 36+ seconds during actual gameplay).
-    CURSOR_MODE_MAX_WAIT_SECONDS = 2.0
 
     # In fixed-position mode, the most consecutive clicks a single detection
     # will fire before forcing a fresh full-region scan, even if the local
@@ -1354,11 +1356,15 @@ class Detector:
                             # re-clicking every cycle while it just sits there. But don't wait
                             # forever - ambient content near the trigger can keep the local
                             # region reading as a match well after the real trigger is gone.
+                            # The cap is the "Re-click wait" setting (default 2s): ambient content
+                            # can keep reading as a match indefinitely (observed: 36+ s), and
+                            # queued actions (e.g. several Kuri clicks) keep the trigger up on purpose.
+                            reclick_wait = self.cfg.get("reclick_wait_ms", DEFAULT_CONFIG["reclick_wait_ms"]) / 1000.0
                             wait_start = time.monotonic()
                             timed_out = False
                             misses = 0
                             while self.scanning_active.is_set() and not self.stop_event.is_set():
-                                if time.monotonic() - wait_start > self.CURSOR_MODE_MAX_WAIT_SECONDS:
+                                if time.monotonic() - wait_start > reclick_wait:
                                     timed_out = True
                                     break
                                 time.sleep(SCAN_INTERVAL)
@@ -1390,6 +1396,12 @@ class Detector:
         finally:
             executor.shutdown(wait=False)
             sct.close()
+
+
+def tk_error():
+    import tkinter
+
+    return tkinter.TclError
 
 
 HOTKEY_DEBOUNCE_SECONDS = 0.3
@@ -1530,7 +1542,7 @@ class KryptikClicksGUI:
         self.detector = Detector(self.cfg, log=self.log)
         self.root.title("KryptikClicks")
         self.root.configure(bg=self.COLORS["bg"])
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
         self.root.protocol("WM_DELETE_WINDOW", self.on_quit)
         self.root.report_callback_exception = self._on_callback_exception
         self._enable_dark_titlebar(self.root)
@@ -1549,7 +1561,11 @@ class KryptikClicksGUI:
             pass
         self._configure_styles()
 
+        self._scroll_canvases = []
         self._build_ui(tk, ttk)
+        self._set_minimum_size()
+        self._fit_to_screen()
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
         self._refresh_template_label()
         self._refresh_status()
         for warning in startup_warnings:
@@ -1572,6 +1588,81 @@ class KryptikClicksGUI:
 
         self._poll_status()
         self.root.mainloop()
+
+    TABS_MIN_HEIGHT = 280  # tab bar + a few rows of settings; the rest scrolls
+
+    def _set_minimum_size(self):
+        """The window can shrink to a short tab area (the tabs scroll) above a few
+        lines of Activity log. It can't get narrower than its natural width, plus
+        room for a scrollbar, so settings are never squeezed sideways."""
+        self.root.update_idletasks()
+        natural_width = self.root.winfo_reqwidth()
+        self.log_list.configure(height=3)
+        self.root.update_idletasks()
+        bottom_min = self._bottom.winfo_reqheight()
+        self.log_list.configure(height=7)
+        self.root.rowconfigure(1, minsize=self.TABS_MIN_HEIGHT)
+        self.root.rowconfigure(2, minsize=bottom_min)
+        self.root.minsize(natural_width + 18,
+                          self._header.winfo_reqheight() + self.TABS_MIN_HEIGHT + bottom_min)
+
+    def _fit_to_screen(self):
+        """With everything visible the window is ~1150px tall - more than a 1080p
+        screen shows - so start no taller than the screen (the tabs scroll)."""
+        self.root.update_idletasks()
+        min_width, min_height = self.root.minsize()
+        max_height = self.root.winfo_screenheight() - 80  # leave room for the taskbar
+        if self.root.winfo_reqheight() > max_height:
+            width = max(self.root.winfo_reqwidth(), min_width)
+            self.root.geometry(f"{width}x{max(max_height, min_height)}")
+
+    def _scrollable(self, page):
+        """Fills a notebook page with a frame that scrolls vertically (scrollbar only
+        when needed, mouse wheel anywhere over it) and returns that frame for the
+        tab's widgets. Its natural height is its full contents, so at the default
+        window size nothing scrolls."""
+        tk = self.tk
+        from tkinter import ttk
+
+        canvas = tk.Canvas(page, bg=self.COLORS["bg"], highlightthickness=0, borderwidth=0)
+        bar = ttk.Scrollbar(page, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg=self.COLORS["bg"])
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+
+        def refresh(_event=None):
+            content_height = inner.winfo_reqheight()
+            canvas.configure(scrollregion=(0, 0, 0, content_height))
+            if int(canvas.cget("height")) != content_height:
+                canvas.configure(height=content_height, width=inner.winfo_reqwidth())
+            canvas.itemconfigure(window, width=canvas.winfo_width())
+            needs_scroll = content_height > canvas.winfo_height() + 1
+            if needs_scroll and not bar.winfo_ismapped():
+                bar.pack(side="right", fill="y", before=canvas)
+            elif not needs_scroll and bar.winfo_ismapped():
+                bar.pack_forget()
+                canvas.yview_moveto(0)
+
+        inner.bind("<Configure>", refresh, add="+")
+        canvas.bind("<Configure>", refresh, add="+")
+        self._scroll_canvases.append(canvas)
+        return inner
+
+    def _on_mousewheel(self, event):
+        # One global handler: scroll whichever tab the pointer is over (child widgets
+        # like entries included), if that tab currently needs scrolling.
+        try:
+            widget = self.root.winfo_containing(event.x_root, event.y_root)
+        except (KeyError, tk_error()):
+            return
+        while widget is not None:
+            if widget in self._scroll_canvases:
+                top, bottom = widget.yview()
+                if top > 0 or bottom < 1:
+                    widget.yview_scroll(int(-event.delta / 120) or (-1 if event.delta > 0 else 1), "units")
+                return
+            widget = widget.master
 
     def _load_emblem(self):
         try:
@@ -1655,6 +1746,11 @@ class KryptikClicksGUI:
 
         s.configure("TNotebook", background=c["bg"], borderwidth=0)
         s.configure(
+            "Vertical.TScrollbar", background=c["panel_bg"], troughcolor=c["bg"],
+            bordercolor=c["bg"], arrowcolor=c["muted"], lightcolor=c["panel_bg"], darkcolor=c["panel_bg"],
+        )
+        s.map("Vertical.TScrollbar", background=[("active", c["border"])])
+        s.configure(
             "TNotebook.Tab",
             background=c["bg"],
             foreground=c["muted"],
@@ -1696,6 +1792,10 @@ class KryptikClicksGUI:
 
         header = tk.Frame(self.root, bg=c["bg"])
         header.grid(row=0, column=0, sticky="we")
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(2, weight=2)
+        self._header = header
 
         title_row = tk.Frame(header, bg=c["bg"])
         title_row.pack(anchor="w", padx=20, pady=(18, 4))
@@ -1719,11 +1819,13 @@ class KryptikClicksGUI:
         # keeps the default view approachable instead of showing every configuration
         # axis at once.
         notebook = ttk.Notebook(self.root, style="TNotebook")
-        notebook.grid(row=1, column=0, sticky="we")
-        simple_tab = tk.Frame(notebook, bg=c["bg"])
-        advanced_tab = tk.Frame(notebook, bg=c["bg"])
-        notebook.add(simple_tab, text="Simple")
-        notebook.add(advanced_tab, text="Advanced")
+        notebook.grid(row=1, column=0, sticky="nsew")
+        simple_page = tk.Frame(notebook, bg=c["bg"])
+        advanced_page = tk.Frame(notebook, bg=c["bg"])
+        notebook.add(simple_page, text="Simple")
+        notebook.add(advanced_page, text="Advanced")
+        simple_tab = self._scrollable(simple_page)
+        advanced_tab = self._scrollable(advanced_page)
 
         radio_kwargs = dict(
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"],
@@ -1733,10 +1835,11 @@ class KryptikClicksGUI:
 
         # --- Simple tab ---
         self.summary_var = tk.StringVar(value="")
-        tk.Label(
+        self.summary_label = tk.Label(
             simple_tab, textvariable=self.summary_var, bg=c["bg"], fg=c["text"],
             font=(FONT, 10), wraplength=400, justify="left",
-        ).pack(anchor="w", padx=20, pady=(16, 14))
+        )
+        self.summary_label.pack(anchor="w", padx=20, pady=(16, 14))
 
         tk.Label(simple_tab, text="MODE", bg=c["bg"], fg=c["muted"], font=(FONT, 8, "bold")).pack(
             anchor="w", padx=20, pady=(0, 6)
@@ -1772,6 +1875,10 @@ class KryptikClicksGUI:
             font=(FONT, 9), wraplength=380, justify="left",
         )
         self.template_label.pack(anchor="w", padx=20, pady=(10, 10))
+        simple_tab.bind("<Configure>", lambda e: (
+            self.summary_label.configure(wraplength=max(200, e.width - 40)),
+            self.template_label.configure(wraplength=max(200, e.width - 40)),
+        ), add="+")
 
         self.capture_var = tk.StringVar(value="Capture Template + Click Target...")
         ttk.Button(
@@ -1843,20 +1950,26 @@ class KryptikClicksGUI:
             value=self._scan_window_display_text(self.cfg["scan_window_title"])
         )
         self.scan_window_row = tk.Frame(self.scan_scope_frame, bg=c["bg"])
-        tk.Label(
+        scan_window_label = tk.Label(
             self.scan_window_row, textvariable=self.scan_window_display_var, bg=c["bg"],
             fg=c["muted"], font=(FONT, 9), wraplength=260, justify="left",
-        ).pack(side="left")
+        )
+        scan_window_label.pack(side="left")
         ttk.Button(
             self.scan_window_row, text="Choose Window...", command=self.on_choose_window,
         ).pack(side="right")
 
         self.scan_region_display_var = tk.StringVar(value=self._scan_region_display_text())
         self.scan_region_row = tk.Frame(self.scan_scope_frame, bg=c["bg"])
-        tk.Label(
+        scan_region_label = tk.Label(
             self.scan_region_row, textvariable=self.scan_region_display_var, bg=c["bg"],
             fg=c["muted"], font=(FONT, 9), wraplength=200, justify="left",
-        ).pack(side="left")
+        )
+        scan_region_label.pack(side="left")
+        advanced_tab.bind("<Configure>", lambda e: (
+            scan_window_label.configure(wraplength=max(260, e.width - 200)),
+            scan_region_label.configure(wraplength=max(200, e.width - 260)),
+        ), add="+")
         ttk.Button(
             self.scan_region_row, text="Limit to Region...", command=self.on_define_scan_region,
         ).pack(side="right")
@@ -1914,8 +2027,17 @@ class KryptikClicksGUI:
             "Longest wait after the trigger first appears before the first click. "
             "Must be >= Trigger delay min. Set both to the same value for a fixed delay.",
         )
+        self.reclick_wait_var = tk.StringVar(value=str(self.cfg["reclick_wait_ms"]))
+        self.reclick_wait_row_widgets = settings_row(
+            "Re-click wait (ms)", self.reclick_wait_var, 4,
+            "Cursor position only. After a click it waits this long for the trigger to go "
+            "away; if it's still showing (e.g. several queued actions), it clicks again after "
+            "the Min/Max delay - and keeps going at that pace while it stays. Set it longer "
+            "than the trigger takes to fade after a normal click, or single actions get "
+            "clicked twice. Default 2000.",
+        )
         self.thr_row_widgets = settings_row(
-            "Match threshold (0-1)", self.thr_var, 4,
+            "Match threshold (0-1)", self.thr_var, 5,
             "How closely the screen must match your captured trigger image to fire "
             "clicking (1.0 = pixel-perfect match). Higher = stricter, fewer false triggers but "
             "may miss it if rendering shifts slightly. Lower = more lenient but may misfire on "
@@ -1928,17 +2050,17 @@ class KryptikClicksGUI:
             settings, text="Click button", bg=c["bg"], fg=c["text"], font=(FONT, 9),
             cursor="question_arrow",
         )
-        button_label.grid(row=5, column=0, sticky="w", pady=7)
+        button_label.grid(row=6, column=0, sticky="w", pady=7)
         self._add_tooltip(button_label, "Which mouse button to click with when the trigger is detected.")
         self.button_var = tk.StringVar(value=self.cfg["click_button"])
         ttk.Combobox(
             settings, textvariable=self.button_var, values=CLICK_BUTTONS, width=7,
             style="Field.TCombobox", state="readonly",
-        ).grid(row=5, column=1, pady=7, sticky="e")
+        ).grid(row=6, column=1, pady=7, sticky="e")
 
         self.limit_var = tk.StringVar(value=str(self.cfg["click_limit"]))
         settings_row(
-            "Repeat limit (0 = infinite)", self.limit_var, 6,
+            "Repeat limit (0 = infinite)", self.limit_var, 7,
             "Automatically pause after this many clicks. Set to 0 to keep clicking with "
             "no limit until you stop it manually.",
         )
@@ -1949,7 +2071,7 @@ class KryptikClicksGUI:
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"], activebackground=c["bg"],
             activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
         )
-        self.sound_check.grid(row=7, column=0, columnspan=2, sticky="w", pady=7)
+        self.sound_check.grid(row=8, column=0, columnspan=2, sticky="w", pady=7)
         self._add_tooltip(
             self.sound_check,
             "Plays a short beep each time it starts clicking on a trigger (or when Generic "
@@ -1962,20 +2084,22 @@ class KryptikClicksGUI:
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"], activebackground=c["bg"],
             activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
         )
-        self.auto_update_check.grid(row=8, column=0, columnspan=2, sticky="w", pady=7)
+        self.auto_update_check.grid(row=9, column=0, columnspan=2, sticky="w", pady=7)
         self._add_tooltip(
             self.auto_update_check,
             "When running the .exe, checks GitHub for a newer release on launch and offers to "
             "open the download page. It never installs anything by itself.",
         )
 
-        ttk.Button(
+        self.save_button = ttk.Button(
             advanced_tab, text="Save Settings", style="Accent.TButton", command=self.on_save_settings
-        ).pack(fill="x", padx=20, pady=(10, 16))
+        )
+        self.save_button.pack(fill="x", padx=20, pady=(10, 16))
 
         # --- Shared (outside the tabs): Activity log + footer ---
         bottom = tk.Frame(self.root, bg=c["bg"])
-        bottom.grid(row=2, column=0, sticky="we")
+        bottom.grid(row=2, column=0, sticky="nsew")
+        self._bottom = bottom
 
         tk.Frame(bottom, bg=c["border"], height=1).pack(fill="x", padx=20, pady=(4, 0))
         tk.Label(
@@ -1987,7 +2111,7 @@ class KryptikClicksGUI:
             bd=0, highlightthickness=1, highlightbackground=c["border"], highlightcolor=c["border"],
             selectbackground=c["accent"], selectforeground=c["text"], activestyle="none",
         )
-        self.log_list.pack(fill="x", padx=20, pady=(0, 16))
+        self.log_list.pack(fill="both", expand=True, padx=20, pady=(0, 16))
 
         tk.Label(
             bottom,
@@ -2047,6 +2171,11 @@ class KryptikClicksGUI:
         # match uses the pixel count captured with the trigger, Generic has no trigger.
         return self.mode_var.get() == "targeted" and self.detection_method_var.get() == "template"
 
+    def _reclick_wait_applies(self):
+        # Only cursor mode waits for the trigger to go away; fixed mode repeats at the
+        # click delay while it's showing, and Generic has no trigger.
+        return self.mode_var.get() == "targeted" and self.position_var.get() == "cursor"
+
     def _trigger_delay_applies(self):
         return self.mode_var.get() == "targeted"  # Generic has no trigger to react to
 
@@ -2056,6 +2185,7 @@ class KryptikClicksGUI:
         for widgets, shown in (
             (self.thr_row_widgets, self._threshold_applies()),
             (self.trigger_delay_row_widgets, self._trigger_delay_applies()),
+            (self.reclick_wait_row_widgets, self._reclick_wait_applies()),
         ):
             for widget in widgets:
                 if shown:
@@ -2067,6 +2197,7 @@ class KryptikClicksGUI:
         # Commit immediately - same reasoning as _on_mode_changed (Simple tab control).
         self.cfg["click_position"] = self.position_var.get()
         save_config(self.cfg)
+        self._apply_settings_row_visibility()
         self._refresh_template_label()
         self._refresh_summary()
 
@@ -2499,10 +2630,13 @@ class KryptikClicksGUI:
         else:
             trigger_min = str(self.cfg["trigger_delay_min_ms"])
             trigger_max = str(self.cfg["trigger_delay_max_ms"])
+        reclick_wait = (self.reclick_wait_var.get() if self._reclick_wait_applies()
+                        else str(self.cfg["reclick_wait_ms"]))
         try:
             parsed = parse_settings_input(
                 self.min_var.get(), self.max_var.get(), thr, self.limit_var.get(),
                 trigger_min_str=trigger_min, trigger_max_str=trigger_max,
+                reclick_wait_str=reclick_wait,
             )
         except ValueError as e:
             self.messagebox.showerror("Invalid settings", str(e))
@@ -2525,6 +2659,8 @@ class KryptikClicksGUI:
         if not self._trigger_delay_applies():
             self.trigger_min_var.set(str(self.cfg["trigger_delay_min_ms"]))
             self.trigger_max_var.set(str(self.cfg["trigger_delay_max_ms"]))
+        if not self._reclick_wait_applies():
+            self.reclick_wait_var.set(str(self.cfg["reclick_wait_ms"]))
         self._refresh_status()
         self._refresh_template_label()
         self._refresh_summary()

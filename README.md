@@ -37,7 +37,8 @@ python KryptikClicks.py --version   # print the version and exit
 The window has two tabs. **Simple** has everything needed for the common case
 (mode, click position, capture, Start/Quit) plus a one-line summary of exactly
 what it's currently set up to do. **Advanced** has detection, scan area and
-timing settings.
+timing settings. The window can be resized; when it's shorter than a tab's
+contents, that tab scrolls.
 
 **Targeted mode** (default):
 1. Select **Targeted** under Mode, then choose a click position: a **fixed
@@ -59,7 +60,8 @@ timing settings.
      with a full scan every 5 clicks), and stops when it disappears.
    - **Cursor position:** it clicks once each time the trigger appears, then
      waits for it to go away before treating the next sighting as new. If it
-     is still there after 2 seconds, it clicks again.
+     is still there after the *Re-click wait* (2 seconds by default), it
+     clicks again.
 
 **Generic mode:**
 1. Select **Generic** under Mode, then choose a click position: a **fixed
@@ -92,6 +94,11 @@ timing settings.
   range, or set both the same for a fixed delay). It only clicks if the
   trigger stays up for the whole wait; one that goes away and comes back
   starts a new wait. `0`/`0` (the default) clicks immediately.
+- **Re-click wait (ms)** — Cursor position only. After a click it waits this
+  long for the trigger to go away; if it's still showing (e.g. several queued
+  actions), it clicks again after the Min/Max delay, and keeps going at that
+  pace while it stays. Keep it longer than the trigger takes to fade after a
+  normal click. Default `2000`.
 - **Match threshold (0-1)** — Image template match only. How closely the
   screen must match your captured picture to fire clicking. Higher =
   stricter/fewer false triggers; lower = more lenient but may misfire. `0.50`

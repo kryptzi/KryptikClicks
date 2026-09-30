@@ -443,3 +443,18 @@ def test_saving_works_again_after_a_later_successful_load(kc):
     kc.save_config(cfg)
 
     assert kc.load_config()["min_color_pixels"] == 9000
+
+
+def test_default_reclick_wait_keeps_the_old_two_seconds(kc):
+    assert kc.load_config()["reclick_wait_ms"] == 2000
+
+
+def test_load_config_keeps_a_valid_reclick_wait(kc):
+    kc.save_config({"reclick_wait_ms": 700})
+    assert kc.load_config()["reclick_wait_ms"] == 700
+
+
+@pytest.mark.parametrize("bad", [-1, float("nan"), float("inf"), True, "fast", 1e300])
+def test_load_config_resets_an_invalid_reclick_wait(kc, bad):
+    kc.save_config({"reclick_wait_ms": bad})
+    assert kc.load_config()["reclick_wait_ms"] == 2000

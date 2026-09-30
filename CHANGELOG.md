@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-30
+
+### Added
+- **The window can be resized.** Wider re-wraps the text to fit; taller gives
+  the Activity log more room. It can shrink to about half its height: the
+  Simple and Advanced tabs scroll (scroll bar + mouse wheel) when they're
+  shorter than their contents, and the Activity log keeps a few lines. It
+  also no longer opens taller than the screen (e.g. on a 1080p monitor).
+- **Re-click wait (ms)** (Advanced tab, cursor position only). After a click,
+  cursor mode waits for the trigger to go away before clicking again - that wait
+  was a fixed 2 seconds. When several actions queue up (e.g. Kuri's plugins),
+  the trigger stays up on purpose and each click takes one action, so they were
+  only clicked every ~2.2s. Now it's a setting: lower it (e.g. ~700) to click
+  queued actions about once a second, keeping it longer than the trigger takes
+  to fade after a normal click. The Min/Max delay still adds on top. Default
+  2000, so nothing changes unless you set it.
+
 ## [1.7.0] - 2026-09-29
 
 ### Added
@@ -508,7 +525,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.2...v1.7.0
 [1.6.2]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.0...v1.6.1

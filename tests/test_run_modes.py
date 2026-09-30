@@ -275,7 +275,7 @@ def test_targeted_cursor_mode_clicks_again_after_max_wait_even_if_still_matching
 
     d = kc.Detector(cfg, log=lambda m: None)
     monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
-    monkeypatch.setattr(kc.Detector, "CURSOR_MODE_MAX_WAIT_SECONDS", 0.05)
+    d.cfg["reclick_wait_ms"] = 50
 
     # Simulate a local region that never stops matching (the bug scenario).
     monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
@@ -299,7 +299,7 @@ def test_targeted_cursor_mode_clicks_again_after_max_wait_even_if_still_matching
 def test_targeted_cursor_mode_waits_configured_delay_between_repeat_clicks(kc, monkeypatch):
     # min_delay_ms/max_delay_ms is meant to space out repeat clicks (e.g. to
     # look less robotic), but cursor-position mode's repeat-click path (firing
-    # again after CURSOR_MODE_MAX_WAIT_SECONDS elapses with the trigger still
+    # again after the re-click wait elapses with the trigger still
     # matching) never called sleep_between_clicks() - the configured delay had
     # zero effect for anyone using cursor-position mode. Gap between repeat
     # clicks should reflect min_delay_ms on top of the max-wait, not just the
@@ -316,7 +316,7 @@ def test_targeted_cursor_mode_waits_configured_delay_between_repeat_clicks(kc, m
 
     d = kc.Detector(cfg, log=lambda m: None)
     monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0)
-    monkeypatch.setattr(kc.Detector, "CURSOR_MODE_MAX_WAIT_SECONDS", 0.02)
+    d.cfg["reclick_wait_ms"] = 20
 
     # Simulate a local region that never stops matching, forcing the repeat-click
     # (max-wait timeout) path rather than the "waited for disappearance" path.
@@ -988,7 +988,7 @@ def test_cursor_mode_does_not_treat_one_missed_sample_as_the_trigger_disappearin
     monkeypatch.setattr(pyautogui, "click", lambda *a, **k: clicks.append(a))
 
     d.start_scanning()
-    _run_for(d, 1.0)  # well under CURSOR_MODE_MAX_WAIT_SECONDS (2s)
+    _run_for(d, 1.0)  # well under the default 2s re-click wait
 
     assert len(clicks) == 1
 
@@ -1050,7 +1050,7 @@ def test_pause_then_start_mid_burst_still_honours_the_start_grace_period(kc, mon
         kc, monkeypatch, click_position=position, min_delay_ms=359, max_delay_ms=359,
     )
     monkeypatch.setattr(kc.Detector, "START_CLICK_GRACE_SECONDS", 0.75)
-    monkeypatch.setattr(kc.Detector, "CURSOR_MODE_MAX_WAIT_SECONDS", 0.05)
+    d.cfg["reclick_wait_ms"] = 50
     monkeypatch.setattr(kc.Detector, "_match_score_in", lambda self, sct, region: (5, 5, 1.0))
     click_times = []
     import pyautogui
@@ -1154,7 +1154,7 @@ def test_a_new_appearance_during_the_cursor_mode_reclick_delay_pays_the_trigger_
         kc, monkeypatch, min_delay_ms=300, max_delay_ms=300,
         trigger_delay_min_ms=300, trigger_delay_max_ms=300,
     )
-    monkeypatch.setattr(kc.Detector, "CURSOR_MODE_MAX_WAIT_SECONDS", 0.3)
+    d.cfg["reclick_wait_ms"] = 300
     _one_region(kc, monkeypatch)
     clicks = []
 
@@ -1325,3 +1325,26 @@ def test_pause_then_start_during_the_trigger_delay_never_clicks_inside_the_new_g
     t.join(2.0)
 
     assert [c - restarted for c in clicks if c < restarted + 0.74] == []
+
+
+def test_queued_actions_that_keep_the_trigger_up_are_clicked_at_the_reclick_wait(kc, monkeypatch):
+    # Kuri queues several actions: the purple overlay stays up (it doesn't fade and
+    # come back) and each click takes one action. The fixed 2s "wait for it to go away"
+    # made every queued click ~2.2s apart; the re-click wait is now a setting.
+    d = _cursor_mode_detector(kc, monkeypatch, reclick_wait_ms=300, min_delay_ms=0, max_delay_ms=1)
+    _one_region(kc, monkeypatch)
+    click_times = []
+
+    def still_purple(self, sct, region):
+        return (5, 5, 100) if len(click_times) < 4 else (0, 0, 0)  # fades after the 4th click
+
+    monkeypatch.setattr(kc.Detector, "_color_match_score_in", still_purple)
+    import pyautogui
+    monkeypatch.setattr(pyautogui, "click", lambda *a, **k: click_times.append(time.perf_counter()))
+
+    d.start_scanning()
+    _run_for(d, 1.6)
+
+    assert len(click_times) == 4  # one per queued action, none after it faded
+    gaps = [b - a for a, b in zip(click_times, click_times[1:])]
+    assert all(0.28 <= g < 0.45 for g in gaps), gaps  # ~300ms apart: not spammed, not 2s
