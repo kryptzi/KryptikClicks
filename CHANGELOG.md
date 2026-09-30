@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-30
+
 ### Added
 - **The window can be resized.** Wider re-wraps the text to fit; taller gives
   the Activity log more room. It can shrink to about half its height: the
@@ -523,7 +525,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.2...v1.7.0
 [1.6.2]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.0...v1.6.1
