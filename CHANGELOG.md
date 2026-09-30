@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The window can be resized.** Wider re-wraps the text to fit; taller gives
+  the Activity log more room. It can shrink to about half its height: the
+  Simple and Advanced tabs scroll (scroll bar + mouse wheel) when they're
+  shorter than their contents, and the Activity log keeps a few lines. It
+  also no longer opens taller than the screen (e.g. on a 1080p monitor).
 - **Re-click wait (ms)** (Advanced tab, cursor position only). After a click,
   cursor mode waits for the trigger to go away before clicking again - that wait
   was a fixed 2 seconds. When several actions queue up (e.g. Kuri's plugins),

@@ -37,7 +37,8 @@ python KryptikClicks.py --version   # print the version and exit
 The window has two tabs. **Simple** has everything needed for the common case
 (mode, click position, capture, Start/Quit) plus a one-line summary of exactly
 what it's currently set up to do. **Advanced** has detection, scan area and
-timing settings.
+timing settings. The window can be resized; when it's shorter than a tab's
+contents, that tab scrolls.
 
 **Targeted mode** (default):
 1. Select **Targeted** under Mode, then choose a click position: a **fixed

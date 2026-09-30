@@ -1398,6 +1398,12 @@ class Detector:
             sct.close()
 
 
+def tk_error():
+    import tkinter
+
+    return tkinter.TclError
+
+
 HOTKEY_DEBOUNCE_SECONDS = 0.3
 UI_QUEUE_POLL_MS = 25  # how often the GUI runs calls handed over from other threads
 
@@ -1536,7 +1542,7 @@ class KryptikClicksGUI:
         self.detector = Detector(self.cfg, log=self.log)
         self.root.title("KryptikClicks")
         self.root.configure(bg=self.COLORS["bg"])
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
         self.root.protocol("WM_DELETE_WINDOW", self.on_quit)
         self.root.report_callback_exception = self._on_callback_exception
         self._enable_dark_titlebar(self.root)
@@ -1555,7 +1561,11 @@ class KryptikClicksGUI:
             pass
         self._configure_styles()
 
+        self._scroll_canvases = []
         self._build_ui(tk, ttk)
+        self._set_minimum_size()
+        self._fit_to_screen()
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel, add="+")
         self._refresh_template_label()
         self._refresh_status()
         for warning in startup_warnings:
@@ -1578,6 +1588,81 @@ class KryptikClicksGUI:
 
         self._poll_status()
         self.root.mainloop()
+
+    TABS_MIN_HEIGHT = 280  # tab bar + a few rows of settings; the rest scrolls
+
+    def _set_minimum_size(self):
+        """The window can shrink to a short tab area (the tabs scroll) above a few
+        lines of Activity log. It can't get narrower than its natural width, plus
+        room for a scrollbar, so settings are never squeezed sideways."""
+        self.root.update_idletasks()
+        natural_width = self.root.winfo_reqwidth()
+        self.log_list.configure(height=3)
+        self.root.update_idletasks()
+        bottom_min = self._bottom.winfo_reqheight()
+        self.log_list.configure(height=7)
+        self.root.rowconfigure(1, minsize=self.TABS_MIN_HEIGHT)
+        self.root.rowconfigure(2, minsize=bottom_min)
+        self.root.minsize(natural_width + 18,
+                          self._header.winfo_reqheight() + self.TABS_MIN_HEIGHT + bottom_min)
+
+    def _fit_to_screen(self):
+        """With everything visible the window is ~1150px tall - more than a 1080p
+        screen shows - so start no taller than the screen (the tabs scroll)."""
+        self.root.update_idletasks()
+        min_width, min_height = self.root.minsize()
+        max_height = self.root.winfo_screenheight() - 80  # leave room for the taskbar
+        if self.root.winfo_reqheight() > max_height:
+            width = max(self.root.winfo_reqwidth(), min_width)
+            self.root.geometry(f"{width}x{max(max_height, min_height)}")
+
+    def _scrollable(self, page):
+        """Fills a notebook page with a frame that scrolls vertically (scrollbar only
+        when needed, mouse wheel anywhere over it) and returns that frame for the
+        tab's widgets. Its natural height is its full contents, so at the default
+        window size nothing scrolls."""
+        tk = self.tk
+        from tkinter import ttk
+
+        canvas = tk.Canvas(page, bg=self.COLORS["bg"], highlightthickness=0, borderwidth=0)
+        bar = ttk.Scrollbar(page, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg=self.COLORS["bg"])
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+
+        def refresh(_event=None):
+            content_height = inner.winfo_reqheight()
+            canvas.configure(scrollregion=(0, 0, 0, content_height))
+            if int(canvas.cget("height")) != content_height:
+                canvas.configure(height=content_height, width=inner.winfo_reqwidth())
+            canvas.itemconfigure(window, width=canvas.winfo_width())
+            needs_scroll = content_height > canvas.winfo_height() + 1
+            if needs_scroll and not bar.winfo_ismapped():
+                bar.pack(side="right", fill="y", before=canvas)
+            elif not needs_scroll and bar.winfo_ismapped():
+                bar.pack_forget()
+                canvas.yview_moveto(0)
+
+        inner.bind("<Configure>", refresh, add="+")
+        canvas.bind("<Configure>", refresh, add="+")
+        self._scroll_canvases.append(canvas)
+        return inner
+
+    def _on_mousewheel(self, event):
+        # One global handler: scroll whichever tab the pointer is over (child widgets
+        # like entries included), if that tab currently needs scrolling.
+        try:
+            widget = self.root.winfo_containing(event.x_root, event.y_root)
+        except (KeyError, tk_error()):
+            return
+        while widget is not None:
+            if widget in self._scroll_canvases:
+                top, bottom = widget.yview()
+                if top > 0 or bottom < 1:
+                    widget.yview_scroll(int(-event.delta / 120) or (-1 if event.delta > 0 else 1), "units")
+                return
+            widget = widget.master
 
     def _load_emblem(self):
         try:
@@ -1661,6 +1746,11 @@ class KryptikClicksGUI:
 
         s.configure("TNotebook", background=c["bg"], borderwidth=0)
         s.configure(
+            "Vertical.TScrollbar", background=c["panel_bg"], troughcolor=c["bg"],
+            bordercolor=c["bg"], arrowcolor=c["muted"], lightcolor=c["panel_bg"], darkcolor=c["panel_bg"],
+        )
+        s.map("Vertical.TScrollbar", background=[("active", c["border"])])
+        s.configure(
             "TNotebook.Tab",
             background=c["bg"],
             foreground=c["muted"],
@@ -1702,6 +1792,10 @@ class KryptikClicksGUI:
 
         header = tk.Frame(self.root, bg=c["bg"])
         header.grid(row=0, column=0, sticky="we")
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(2, weight=2)
+        self._header = header
 
         title_row = tk.Frame(header, bg=c["bg"])
         title_row.pack(anchor="w", padx=20, pady=(18, 4))
@@ -1725,11 +1819,13 @@ class KryptikClicksGUI:
         # keeps the default view approachable instead of showing every configuration
         # axis at once.
         notebook = ttk.Notebook(self.root, style="TNotebook")
-        notebook.grid(row=1, column=0, sticky="we")
-        simple_tab = tk.Frame(notebook, bg=c["bg"])
-        advanced_tab = tk.Frame(notebook, bg=c["bg"])
-        notebook.add(simple_tab, text="Simple")
-        notebook.add(advanced_tab, text="Advanced")
+        notebook.grid(row=1, column=0, sticky="nsew")
+        simple_page = tk.Frame(notebook, bg=c["bg"])
+        advanced_page = tk.Frame(notebook, bg=c["bg"])
+        notebook.add(simple_page, text="Simple")
+        notebook.add(advanced_page, text="Advanced")
+        simple_tab = self._scrollable(simple_page)
+        advanced_tab = self._scrollable(advanced_page)
 
         radio_kwargs = dict(
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"],
@@ -1739,10 +1835,11 @@ class KryptikClicksGUI:
 
         # --- Simple tab ---
         self.summary_var = tk.StringVar(value="")
-        tk.Label(
+        self.summary_label = tk.Label(
             simple_tab, textvariable=self.summary_var, bg=c["bg"], fg=c["text"],
             font=(FONT, 10), wraplength=400, justify="left",
-        ).pack(anchor="w", padx=20, pady=(16, 14))
+        )
+        self.summary_label.pack(anchor="w", padx=20, pady=(16, 14))
 
         tk.Label(simple_tab, text="MODE", bg=c["bg"], fg=c["muted"], font=(FONT, 8, "bold")).pack(
             anchor="w", padx=20, pady=(0, 6)
@@ -1778,6 +1875,10 @@ class KryptikClicksGUI:
             font=(FONT, 9), wraplength=380, justify="left",
         )
         self.template_label.pack(anchor="w", padx=20, pady=(10, 10))
+        simple_tab.bind("<Configure>", lambda e: (
+            self.summary_label.configure(wraplength=max(200, e.width - 40)),
+            self.template_label.configure(wraplength=max(200, e.width - 40)),
+        ), add="+")
 
         self.capture_var = tk.StringVar(value="Capture Template + Click Target...")
         ttk.Button(
@@ -1849,20 +1950,26 @@ class KryptikClicksGUI:
             value=self._scan_window_display_text(self.cfg["scan_window_title"])
         )
         self.scan_window_row = tk.Frame(self.scan_scope_frame, bg=c["bg"])
-        tk.Label(
+        scan_window_label = tk.Label(
             self.scan_window_row, textvariable=self.scan_window_display_var, bg=c["bg"],
             fg=c["muted"], font=(FONT, 9), wraplength=260, justify="left",
-        ).pack(side="left")
+        )
+        scan_window_label.pack(side="left")
         ttk.Button(
             self.scan_window_row, text="Choose Window...", command=self.on_choose_window,
         ).pack(side="right")
 
         self.scan_region_display_var = tk.StringVar(value=self._scan_region_display_text())
         self.scan_region_row = tk.Frame(self.scan_scope_frame, bg=c["bg"])
-        tk.Label(
+        scan_region_label = tk.Label(
             self.scan_region_row, textvariable=self.scan_region_display_var, bg=c["bg"],
             fg=c["muted"], font=(FONT, 9), wraplength=200, justify="left",
-        ).pack(side="left")
+        )
+        scan_region_label.pack(side="left")
+        advanced_tab.bind("<Configure>", lambda e: (
+            scan_window_label.configure(wraplength=max(260, e.width - 200)),
+            scan_region_label.configure(wraplength=max(200, e.width - 260)),
+        ), add="+")
         ttk.Button(
             self.scan_region_row, text="Limit to Region...", command=self.on_define_scan_region,
         ).pack(side="right")
@@ -1984,13 +2091,15 @@ class KryptikClicksGUI:
             "open the download page. It never installs anything by itself.",
         )
 
-        ttk.Button(
+        self.save_button = ttk.Button(
             advanced_tab, text="Save Settings", style="Accent.TButton", command=self.on_save_settings
-        ).pack(fill="x", padx=20, pady=(10, 16))
+        )
+        self.save_button.pack(fill="x", padx=20, pady=(10, 16))
 
         # --- Shared (outside the tabs): Activity log + footer ---
         bottom = tk.Frame(self.root, bg=c["bg"])
-        bottom.grid(row=2, column=0, sticky="we")
+        bottom.grid(row=2, column=0, sticky="nsew")
+        self._bottom = bottom
 
         tk.Frame(bottom, bg=c["border"], height=1).pack(fill="x", padx=20, pady=(4, 0))
         tk.Label(
@@ -2002,7 +2111,7 @@ class KryptikClicksGUI:
             bd=0, highlightthickness=1, highlightbackground=c["border"], highlightcolor=c["border"],
             selectbackground=c["accent"], selectforeground=c["text"], activestyle="none",
         )
-        self.log_list.pack(fill="x", padx=20, pady=(0, 16))
+        self.log_list.pack(fill="both", expand=True, padx=20, pady=(0, 16))
 
         tk.Label(
             bottom,

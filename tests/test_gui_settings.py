@@ -560,3 +560,99 @@ def test_reclick_wait_is_saved_from_the_form(kc, gui):
     gui.on_save_settings()
 
     assert kc.load_config()["reclick_wait_ms"] == 700.0
+
+
+def _size(gui):
+    gui.root.update()
+    return gui.root.winfo_width(), gui.root.winfo_height()
+
+
+def _resize(gui, width, height):
+    gui.root.geometry(f"{width}x{height}")
+    gui.root.update()
+
+
+def test_the_window_can_be_resized(gui):
+    assert all(gui.root.resizable())
+
+
+def test_extra_height_goes_to_the_activity_log(gui):
+    width, height = _size(gui)
+    log_before = gui.log_list.winfo_height()
+
+    _resize(gui, width, height + 200)
+
+    assert gui.log_list.winfo_height() >= log_before + 100
+
+
+def test_extra_width_rewraps_the_summary_and_capture_text(gui):
+    width, height = _size(gui)
+    wraps_before = (int(gui.summary_label.cget("wraplength")), int(gui.template_label.cget("wraplength")))
+
+    _resize(gui, width + 300, height)
+
+    wraps_after = (int(gui.summary_label.cget("wraplength")), int(gui.template_label.cget("wraplength")))
+    assert all(after >= before + 250 for before, after in zip(wraps_before, wraps_after))
+
+
+def test_the_window_shrinks_well_below_its_contents_and_the_tabs_scroll(gui):
+    # The Advanced tab's settings alone are ~750px tall, so a minimum size that shows
+    # everything at once barely let the window shrink (min ~1070px, taller than a 1080p
+    # screen). The tabs scroll instead.
+    width, height = _size(gui)
+    min_width, min_height = gui.root.minsize()
+    assert min_height <= height * 0.65
+
+    _resize(gui, 1, 1)  # clamps to the minimum
+    nb = [w for w in gui.root.winfo_children() if w.winfo_class() == "TNotebook"][0]
+    nb.select(1)
+    gui.root.update()
+    assert gui.log_list.winfo_height() > 20  # a few lines of log still visible
+
+    advanced = gui.save_button.master  # the scrollable frame inside the Advanced tab
+    canvas = advanced.master
+    canvas.yview_moveto(1.0)  # scroll to the bottom
+    gui.root.update()
+    canvas_bottom = canvas.winfo_rooty() + canvas.winfo_height()
+    save_bottom = gui.save_button.winfo_rooty() + gui.save_button.winfo_height()
+    assert gui.save_button.winfo_rooty() >= canvas.winfo_rooty() and save_bottom <= canvas_bottom + 1
+
+
+def test_at_its_natural_size_nothing_needs_scrolling(gui):
+    nb = [w for w in gui.root.winfo_children() if w.winfo_class() == "TNotebook"][0]
+    for tab_index, page in ((0, gui.summary_label.master), (1, gui.save_button.master)):
+        nb.select(tab_index)  # a hidden tab reports a 1px height
+        gui.root.update()
+        canvas = page.master
+        assert page.winfo_reqheight() <= canvas.winfo_height() + 1
+
+
+def test_the_window_starts_no_taller_than_the_screen(make_gui, monkeypatch):
+    # With everything visible it's ~1150px tall - more than a 1080p screen shows.
+    import tkinter as tk
+
+    monkeypatch.setattr(tk.Misc, "winfo_screenheight", lambda self: 900)
+    app = make_gui()
+    app.root.update()
+
+    assert app.root.minsize()[1] <= app.root.winfo_height() <= 900 - 80
+
+
+def test_the_mouse_wheel_scrolls_the_settings_from_anywhere_over_them(gui, monkeypatch):
+    _resize(gui, 1, 1)  # minimum size, so the Advanced tab has to scroll
+    nb = [w for w in gui.root.winfo_children() if w.winfo_class() == "TNotebook"][0]
+    nb.select(1)
+    gui.root.update()
+    entry = gui.reclick_wait_row_widgets[1]  # an entry deep inside the tab
+    canvas = gui.save_button.master.master
+    monkeypatch.setattr(gui.root, "winfo_containing", lambda x, y: entry)
+
+    class Wheel:
+        x_root = y_root = 0
+        delta = -120  # one notch down
+
+    gui._on_mousewheel(Wheel())
+    gui.root.update()
+
+    assert canvas.yview()[0] > 0
+
