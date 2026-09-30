@@ -5,7 +5,7 @@ def test_valid_input_returns_parsed_values(kc):
     result = kc.parse_settings_input("50", "150", "0.85", "0")
     assert result == {
         "min_delay_ms": 50.0, "max_delay_ms": 150.0, "match_threshold": 0.85, "click_limit": 0,
-        "trigger_delay_min_ms": 0.0, "trigger_delay_max_ms": 0.0,
+        "trigger_delay_min_ms": 0.0, "trigger_delay_max_ms": 0.0, "reclick_wait_ms": 2000.0,
     }
 
 
@@ -86,3 +86,14 @@ def test_rejects_non_finite_click_limit_with_a_friendly_error(kc, limit):
 def test_rejects_absurd_trigger_delay(kc):
     with pytest.raises(ValueError):
         kc.parse_settings_input("50", "150", "0.85", "0", trigger_min_str="0", trigger_max_str="1e300")
+
+
+def test_parses_the_reclick_wait(kc):
+    result = kc.parse_settings_input("50", "150", "0.85", "0", reclick_wait_str="700")
+    assert result["reclick_wait_ms"] == 700.0
+
+
+@pytest.mark.parametrize("bad", ["-5", "nan", "inf", "soon"])
+def test_rejects_an_invalid_reclick_wait(kc, bad):
+    with pytest.raises(ValueError):
+        kc.parse_settings_input("50", "150", "0.85", "0", reclick_wait_str=bad)

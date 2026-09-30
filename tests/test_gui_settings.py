@@ -534,3 +534,29 @@ def test_a_pause_made_while_the_region_overlay_is_open_is_kept(kc, gui, monkeypa
     gui.on_define_scan_region()
 
     assert not gui.detector.scanning_active.is_set()
+
+
+@pytest.mark.parametrize("mode, position, shown", [
+    ("targeted", "cursor", True),
+    ("targeted", "fixed", False),   # fixed mode already repeats at the click delay
+    ("generic", "cursor", False),
+])
+def test_reclick_wait_row_only_shows_for_targeted_cursor_mode(gui, mode, position, shown):
+    gui.mode_var.set(mode)
+    gui._on_mode_changed()
+    gui.position_var.set(position)
+    gui._on_click_position_changed()
+
+    assert all(_is_shown(w) == shown for w in gui.reclick_wait_row_widgets)
+
+
+def test_reclick_wait_is_saved_from_the_form(kc, gui):
+    gui.mode_var.set("targeted")
+    gui._on_mode_changed()
+    gui.position_var.set("cursor")
+    gui._on_click_position_changed()
+    gui.reclick_wait_var.set("700")
+
+    gui.on_save_settings()
+
+    assert kc.load_config()["reclick_wait_ms"] == 700.0

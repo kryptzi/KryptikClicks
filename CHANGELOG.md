@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Re-click wait (ms)** (Advanced tab, cursor position only). After a click,
+  cursor mode waits for the trigger to go away before clicking again - that wait
+  was a fixed 2 seconds. When several actions queue up (e.g. Kuri's plugins),
+  the trigger stays up on purpose and each click takes one action, so they were
+  only clicked every ~2.2s. Now it's a setting: lower it (e.g. ~700) to click
+  queued actions about once a second, keeping it longer than the trigger takes
+  to fade after a normal click. The Min/Max delay still adds on top. Default
+  2000, so nothing changes unless you set it.
+
 ## [1.7.0] - 2026-09-29
 
 ### Added

@@ -73,6 +73,7 @@ DEFAULT_CONFIG = {
     "max_delay_ms": 150,
     "trigger_delay_min_ms": 0,
     "trigger_delay_max_ms": 0,
+    "reclick_wait_ms": 2000,
     "match_threshold": 0.50,
     "click_button": "left",
     "click_mode": "targeted",
@@ -253,6 +254,9 @@ def load_config(on_warning=None):
     if not is_valid_delay_range(cfg.get("trigger_delay_min_ms"), cfg.get("trigger_delay_max_ms")):
         cfg["trigger_delay_min_ms"] = DEFAULT_CONFIG["trigger_delay_min_ms"]
         cfg["trigger_delay_max_ms"] = DEFAULT_CONFIG["trigger_delay_max_ms"]
+    reclick = cfg.get("reclick_wait_ms")
+    if not is_finite_number(reclick) or not 0 <= reclick <= MAX_DELAY_MS:
+        cfg["reclick_wait_ms"] = DEFAULT_CONFIG["reclick_wait_ms"]
     return cfg
 
 
@@ -852,7 +856,7 @@ def capture_template_cli():
 
 
 def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str,
-                         trigger_min_str="0", trigger_max_str="0"):
+                         trigger_min_str="0", trigger_max_str="0", reclick_wait_str="2000"):
     """Parses/validates the settings-form text fields. Raises ValueError with a
     user-facing message on invalid input; otherwise returns the parsed values."""
     try:
@@ -862,12 +866,15 @@ def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str,
         click_limit = int(float(click_limit_str))
         trigger_min = float(trigger_min_str)
         trigger_max = float(trigger_max_str)
+        reclick_wait = float(reclick_wait_str)
     except (ValueError, OverflowError):  # int(float("inf")) raises OverflowError
         raise ValueError("Enter valid numbers.")
     if not is_valid_delay_range(trigger_min, trigger_max):
         raise ValueError("Trigger delay min must be >= 0 and <= trigger delay max (at most 24 hours).")
     if not is_valid_delay_range(min_ms, max_ms):
         raise ValueError("Min delay must be >= 0 and <= max delay (at most 24 hours).")
+    if not is_finite_number(reclick_wait) or not 0 <= reclick_wait <= MAX_DELAY_MS:
+        raise ValueError("Re-click wait must be between 0 and 24 hours (in ms).")
     if not (0.0 < thr <= 1.0):
         raise ValueError("Threshold must be between 0 and 1.")
     if click_limit < 0:
@@ -879,6 +886,7 @@ def parse_settings_input(min_ms_str, max_ms_str, thr_str, click_limit_str,
         "click_limit": click_limit,
         "trigger_delay_min_ms": trigger_min,
         "trigger_delay_max_ms": trigger_max,
+        "reclick_wait_ms": reclick_wait,
     }
 
 
@@ -886,12 +894,6 @@ class Detector:
     """Loads the template/target and does the screen-matching + clicking work.
     Shared by both the GUI and the headless CLI mode."""
 
-    # In cursor-position mode, the longest we'll wait for the local region around
-    # a detected trigger to read as "gone" before clicking again anyway. Ambient
-    # game content near the trigger (not the trigger itself) can keep scoring as
-    # a match indefinitely, which without this cap can starve real re-clicks for
-    # a very long time (observed: 36+ seconds during actual gameplay).
-    CURSOR_MODE_MAX_WAIT_SECONDS = 2.0
 
     # In fixed-position mode, the most consecutive clicks a single detection
     # will fire before forcing a fresh full-region scan, even if the local
@@ -1354,11 +1356,15 @@ class Detector:
                             # re-clicking every cycle while it just sits there. But don't wait
                             # forever - ambient content near the trigger can keep the local
                             # region reading as a match well after the real trigger is gone.
+                            # The cap is the "Re-click wait" setting (default 2s): ambient content
+                            # can keep reading as a match indefinitely (observed: 36+ s), and
+                            # queued actions (e.g. several Kuri clicks) keep the trigger up on purpose.
+                            reclick_wait = self.cfg.get("reclick_wait_ms", DEFAULT_CONFIG["reclick_wait_ms"]) / 1000.0
                             wait_start = time.monotonic()
                             timed_out = False
                             misses = 0
                             while self.scanning_active.is_set() and not self.stop_event.is_set():
-                                if time.monotonic() - wait_start > self.CURSOR_MODE_MAX_WAIT_SECONDS:
+                                if time.monotonic() - wait_start > reclick_wait:
                                     timed_out = True
                                     break
                                 time.sleep(SCAN_INTERVAL)
@@ -1914,8 +1920,17 @@ class KryptikClicksGUI:
             "Longest wait after the trigger first appears before the first click. "
             "Must be >= Trigger delay min. Set both to the same value for a fixed delay.",
         )
+        self.reclick_wait_var = tk.StringVar(value=str(self.cfg["reclick_wait_ms"]))
+        self.reclick_wait_row_widgets = settings_row(
+            "Re-click wait (ms)", self.reclick_wait_var, 4,
+            "Cursor position only. After a click it waits this long for the trigger to go "
+            "away; if it's still showing (e.g. several queued actions), it clicks again after "
+            "the Min/Max delay - and keeps going at that pace while it stays. Set it longer "
+            "than the trigger takes to fade after a normal click, or single actions get "
+            "clicked twice. Default 2000.",
+        )
         self.thr_row_widgets = settings_row(
-            "Match threshold (0-1)", self.thr_var, 4,
+            "Match threshold (0-1)", self.thr_var, 5,
             "How closely the screen must match your captured trigger image to fire "
             "clicking (1.0 = pixel-perfect match). Higher = stricter, fewer false triggers but "
             "may miss it if rendering shifts slightly. Lower = more lenient but may misfire on "
@@ -1928,17 +1943,17 @@ class KryptikClicksGUI:
             settings, text="Click button", bg=c["bg"], fg=c["text"], font=(FONT, 9),
             cursor="question_arrow",
         )
-        button_label.grid(row=5, column=0, sticky="w", pady=7)
+        button_label.grid(row=6, column=0, sticky="w", pady=7)
         self._add_tooltip(button_label, "Which mouse button to click with when the trigger is detected.")
         self.button_var = tk.StringVar(value=self.cfg["click_button"])
         ttk.Combobox(
             settings, textvariable=self.button_var, values=CLICK_BUTTONS, width=7,
             style="Field.TCombobox", state="readonly",
-        ).grid(row=5, column=1, pady=7, sticky="e")
+        ).grid(row=6, column=1, pady=7, sticky="e")
 
         self.limit_var = tk.StringVar(value=str(self.cfg["click_limit"]))
         settings_row(
-            "Repeat limit (0 = infinite)", self.limit_var, 6,
+            "Repeat limit (0 = infinite)", self.limit_var, 7,
             "Automatically pause after this many clicks. Set to 0 to keep clicking with "
             "no limit until you stop it manually.",
         )
@@ -1949,7 +1964,7 @@ class KryptikClicksGUI:
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"], activebackground=c["bg"],
             activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
         )
-        self.sound_check.grid(row=7, column=0, columnspan=2, sticky="w", pady=7)
+        self.sound_check.grid(row=8, column=0, columnspan=2, sticky="w", pady=7)
         self._add_tooltip(
             self.sound_check,
             "Plays a short beep each time it starts clicking on a trigger (or when Generic "
@@ -1962,7 +1977,7 @@ class KryptikClicksGUI:
             bg=c["bg"], fg=c["text"], selectcolor=c["panel_bg"], activebackground=c["bg"],
             activeforeground=c["text"], highlightthickness=0, font=(FONT, 9),
         )
-        self.auto_update_check.grid(row=8, column=0, columnspan=2, sticky="w", pady=7)
+        self.auto_update_check.grid(row=9, column=0, columnspan=2, sticky="w", pady=7)
         self._add_tooltip(
             self.auto_update_check,
             "When running the .exe, checks GitHub for a newer release on launch and offers to "
@@ -2047,6 +2062,11 @@ class KryptikClicksGUI:
         # match uses the pixel count captured with the trigger, Generic has no trigger.
         return self.mode_var.get() == "targeted" and self.detection_method_var.get() == "template"
 
+    def _reclick_wait_applies(self):
+        # Only cursor mode waits for the trigger to go away; fixed mode repeats at the
+        # click delay while it's showing, and Generic has no trigger.
+        return self.mode_var.get() == "targeted" and self.position_var.get() == "cursor"
+
     def _trigger_delay_applies(self):
         return self.mode_var.get() == "targeted"  # Generic has no trigger to react to
 
@@ -2056,6 +2076,7 @@ class KryptikClicksGUI:
         for widgets, shown in (
             (self.thr_row_widgets, self._threshold_applies()),
             (self.trigger_delay_row_widgets, self._trigger_delay_applies()),
+            (self.reclick_wait_row_widgets, self._reclick_wait_applies()),
         ):
             for widget in widgets:
                 if shown:
@@ -2067,6 +2088,7 @@ class KryptikClicksGUI:
         # Commit immediately - same reasoning as _on_mode_changed (Simple tab control).
         self.cfg["click_position"] = self.position_var.get()
         save_config(self.cfg)
+        self._apply_settings_row_visibility()
         self._refresh_template_label()
         self._refresh_summary()
 
@@ -2499,10 +2521,13 @@ class KryptikClicksGUI:
         else:
             trigger_min = str(self.cfg["trigger_delay_min_ms"])
             trigger_max = str(self.cfg["trigger_delay_max_ms"])
+        reclick_wait = (self.reclick_wait_var.get() if self._reclick_wait_applies()
+                        else str(self.cfg["reclick_wait_ms"]))
         try:
             parsed = parse_settings_input(
                 self.min_var.get(), self.max_var.get(), thr, self.limit_var.get(),
                 trigger_min_str=trigger_min, trigger_max_str=trigger_max,
+                reclick_wait_str=reclick_wait,
             )
         except ValueError as e:
             self.messagebox.showerror("Invalid settings", str(e))
@@ -2525,6 +2550,8 @@ class KryptikClicksGUI:
         if not self._trigger_delay_applies():
             self.trigger_min_var.set(str(self.cfg["trigger_delay_min_ms"]))
             self.trigger_max_var.set(str(self.cfg["trigger_delay_max_ms"]))
+        if not self._reclick_wait_applies():
+            self.reclick_wait_var.set(str(self.cfg["reclick_wait_ms"]))
         self._refresh_status()
         self._refresh_template_label()
         self._refresh_summary()
