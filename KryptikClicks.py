@@ -31,7 +31,7 @@ import threading
 import time
 import argparse
 
-__version__ = "1.6.2"
+__version__ = "1.7.0"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 

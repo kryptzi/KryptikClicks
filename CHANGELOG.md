@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-29
+
 ### Added
 - **Trigger delay.** New *Trigger delay min/max (ms)* settings (Advanced tab)
   add a wait between the moment a trigger is spotted and the first click -
@@ -506,7 +508,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dark-themed settings GUI, global F6/F9 hotkeys, randomized click delay,
   and a standalone Windows exe build.
 
-[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/kryptzi/KryptikClicks/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.2...v1.7.0
 [1.6.2]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/kryptzi/KryptikClicks/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/kryptzi/KryptikClicks/compare/v1.5.3...v1.6.0
